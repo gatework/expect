@@ -1,0 +1,37 @@
+# expect import boundaries (STANDARD.md ARC-1), enforced by archcheck.
+# Bottom up: internal/scan, internal/redact, record → root (expect) →
+# spawn, expecttest → examples.
+declared:
+  - .
+  - ./internal/scan
+  - ./internal/redact
+  - ./record
+  - ./spawn
+  - ./expecttest
+  - ./examples/dialogue
+
+rules:
+  - name: the engine never imports device libraries, applications or its predecessor
+    packages: [./...]
+    deny: [github.com/gatework/net-connector/..., github.com/gatework/netops/..., github.com/gatework/go-expect/...,
+           github.com/gatework/fabric/..., github.com/gatework/wireless/..., github.com/gatework/firemon/...]
+    transitive: true
+
+  - name: matching and redaction algorithms are independent of sessions and recording
+    packages: [./internal/scan, ./internal/redact]
+    deny: [., ./record, ./spawn, ./expecttest]
+    transitive: true
+
+  - name: recording knows files, not sessions
+    packages: [./record]
+    deny: [., ./internal/scan, ./internal/redact, ./spawn, ./expecttest]
+    transitive: true
+
+  - name: the session depends on its algorithms and recording only
+    packages: [.]
+    deny: [./spawn, ./expecttest, ./examples/dialogue]
+    transitive: true
+
+  - name: process terminals are adapters on top of the session
+    packages: [./spawn, ./expecttest]
+    deny: [./internal/scan, ./internal/redact, ./examples/dialogue]
