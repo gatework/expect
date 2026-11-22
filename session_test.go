@@ -278,6 +278,29 @@ func TestSession_NoConsume(t *testing.T) {
 	}
 }
 
+// TestSession_NoConsumeAcrossChunks checks that a preview fires once per
+// candidate even when more input arrives after it.
+func TestSession_NoConsumeAcrossChunks(t *testing.T) {
+	t.Parallel()
+	s, p := pipe(t)
+	go func() {
+		_, _ = p.conn.Write([]byte("a"))
+		_, _ = p.conn.Write([]byte("x"))
+		_, _ = p.conn.Write([]byte("b"))
+	}()
+	seen := 0
+	r, err := s.Expect(t.Context(), []expect.Case{
+		{Name: "peek", Pattern: expect.Literal("a"), NoConsume: true, Handler: func(context.Context, *expect.Session, expect.Result) (expect.Action, error) {
+			seen++
+			return expect.Continue, nil
+		}},
+		lit("b", "b"),
+	}, expect.WithTimeout(time.Second))
+	if err != nil || r.Name != "b" || r.Before != "ax" || seen != 1 {
+		t.Fatalf("got %+v %v, peeked %d", r, err, seen)
+	}
+}
+
 func TestSession_SetRules(t *testing.T) {
 	t.Parallel()
 	s, p := pipe(t)
@@ -447,7 +470,7 @@ func TestNewSession_RecordsByDefault(t *testing.T) {
 	}
 	paths := s.Transcript()
 	_ = s.Close()
-	if len(paths) != 2 || !strings.HasPrefix(paths[0], filepath.Join(home, ".local", "expect")) {
+	if len(paths) != 2 || !strings.HasPrefix(paths[0], filepath.Join(home, ".local", "share", "gatework", "expect")) {
 		t.Fatalf("default transcript %v", paths)
 	}
 	t.Setenv("EXPECT_RECORD", "off")

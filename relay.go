@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
-
-	"github.com/gatework/expect/internal/redact"
 )
 
 // relayFlush is how long a route holds a possible partial match while its
@@ -71,7 +69,7 @@ type relayRoute struct {
 	l      *lease
 	m      *member
 	o      matchOptions
-	filter *redact.Filter
+	filter *outputFilter
 }
 
 func newRelayRoute(i int, rt Route, earlier []Route, opts []MatchOption) (*relayRoute, error) {
@@ -90,9 +88,7 @@ func newRelayRoute(i int, rt Route, earlier []Route, opts []MatchOption) (*relay
 		return nil, err
 	}
 	s := rt.Source
-	s.diagMu.Lock()
-	filter := s.rxFilter.Clone()
-	s.diagMu.Unlock()
+	filter := s.newOutputFilter()
 	return &relayRoute{index: i, rt: rt, l: l, m: newMember(l, rt.Cases, o), o: o, filter: filter}, nil
 }
 
@@ -141,7 +137,7 @@ func (r *relayRoute) step(ctx context.Context, w *waiter, flush bool) (bool, err
 		if err := r.forward(ctx, s.rx[:end]); err != nil {
 			return true, err
 		}
-		out := w.fire(ctx, r.m, e, mt)
+		out := r.m.fire(ctx, e, mt)
 		if out.err != nil || out.act == Return {
 			return true, cmpOr(out.err, errRelayDone)
 		}
@@ -152,17 +148,15 @@ func (r *relayRoute) step(ctx context.Context, w *waiter, flush bool) (bool, err
 	ended := r.l.ended()
 	cut := len(s.rx)
 	if !flush && !ended {
-		for _, e := range r.m.cases {
-			if e.c.Pattern.isText() {
-				cut = min(cut, e.c.Pattern.m.Hold(s.rx))
-			}
-		}
+		cut = r.m.hold()
 	}
 	if err := r.forward(ctx, s.rx[:cut]); err != nil {
 		return true, err
 	}
-	r.l.consume(cut)
-	r.m.reset()
+	if cut > 0 {
+		r.l.consume(cut)
+		r.m.reset()
+	}
 	if !ended {
 		return false, nil
 	}

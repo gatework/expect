@@ -71,6 +71,16 @@ type Observer func(Event)
 // observers.
 func (s *Session) emit(ctx context.Context, ev Event) {
 	ev.Session = s.id
+	if s.log.Enabled(ctx, slog.LevelDebug) {
+		s.logEvent(context.WithoutCancel(ctx), ev)
+	}
+	for _, o := range s.o.observers {
+		o(ev)
+	}
+}
+
+// logEvent writes ev to the session logger.
+func (s *Session) logEvent(ctx context.Context, ev Event) {
 	attrs := []slog.Attr{slog.String("op", string(ev.Op))}
 	if ev.Case != "" {
 		attrs = append(attrs, slog.String("case", ev.Case))
@@ -87,10 +97,7 @@ func (s *Session) emit(ctx context.Context, ev Event) {
 	if ev.Err != ClassNone {
 		attrs = append(attrs, slog.String("err_class", string(ev.Err)))
 	}
-	s.log.LogAttrs(context.WithoutCancel(ctx), slog.LevelDebug, "expect: event", attrs...)
-	for _, o := range s.o.observers {
-		o(ev)
-	}
+	s.log.LogAttrs(ctx, slog.LevelDebug, "expect: event", attrs...)
 }
 
 // classify maps an error to its class.
@@ -114,7 +121,7 @@ func classify(err error) ErrorClass {
 		return ClassClosed
 	case errors.Is(err, io.EOF):
 		return ClassEOF
-	case errors.Is(err, ErrBufferLimit):
+	case errors.Is(err, ErrBufferLimit), errors.Is(err, ErrOutputLimit):
 		return ClassBufferLimit
 	case errors.Is(err, ErrBusy):
 		return ClassBusy

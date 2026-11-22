@@ -70,7 +70,7 @@ func (g *Group) Expect(ctx context.Context, cases []Case, opts ...MatchOption) (
 	w := newWaiter(o, wake, members...)
 	w.control, w.cases = run.ctl, cases
 	start := time.Now()
-	m, r, err := w.run(ctx)
+	m, r, err := w.wait(ctx)
 	g.mu.Lock()
 	g.run = nil
 	close(run.done)

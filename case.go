@@ -13,9 +13,11 @@ const (
 	// Return completes the wait with the handler's Result. It is the zero
 	// value and the action of a case without handler.
 	Return Action = iota
-	// Continue keeps waiting and restarts the relative timer.
+	// Continue keeps waiting and restarts the relative timer, like Tcl's
+	// exp_continue.
 	Continue
-	// ContinueKeepTimer keeps waiting without restarting the timer.
+	// ContinueKeepTimer keeps waiting without restarting the timer, like
+	// exp_continue -continue_timer.
 	ContinueKeepTimer
 )
 
@@ -41,8 +43,13 @@ type Case struct {
 	// cases.
 	Limit int
 	// NoConsume previews a text match without consuming it. A Continue
-	// then observes the same unchanged candidate only once.
+	// then observes each candidate once, even as more input arrives;
+	// another case consuming input makes the next candidate new.
 	NoConsume bool
+	// Omit keeps the matched text out of Result.Output (WithOutput); the
+	// text before it is kept. Use it for pagers and prompts, whose text
+	// is not part of a command's output. Result.Match still holds it.
+	Omit bool
 	// Sessions restricts a Group case to these members; empty means all.
 	Sessions []*Session
 }
@@ -67,6 +74,9 @@ func (c Case) validate(i int, rule bool) error {
 	}
 	if c.NoConsume && !c.Pattern.isText() {
 		return configError("case", "NoConsume on an event pattern")
+	}
+	if c.Omit && (c.NoConsume || !c.Pattern.isText()) {
+		return configError("case", "Omit needs a consuming text pattern")
 	}
 	if rule && len(c.Sessions) > 0 {
 		return configError("rule", "rules cannot select sessions")

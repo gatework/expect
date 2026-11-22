@@ -66,8 +66,16 @@ type Result struct {
 	// Start and End delimit Match within Buffer().
 	Start, End    int
 	Before, Match string
-	Captures      []Capture
-	groups        []int
+	// Output is set with WithOutput (always by Exchange): every byte the
+	// wait consumed, in order, across the cases that continued.
+	Output   string
+	Captures []Capture
+	groups   []int
+	// tail and split describe a result whose text is still to be taken
+	// from the end of Output: its last tail bytes, Before up to split,
+	// and with lazyMatch Match from split.
+	tail, split int
+	lazyMatch   bool
 }
 
 // Buffer returns Before followed by Match.

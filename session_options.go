@@ -114,7 +114,7 @@ func WithObserver(observers ...Observer) SessionOption {
 //
 // Without WithRecorder or WithoutRecording, NewSession records with a
 // Recorder built from record.ConfigFromEnv: recording is on by default,
-// under ~/.local/expect, and EXPECT_RECORD=off turns it off.
+// under ~/.local/share/gatework/expect, and EXPECT_RECORD=off turns it off.
 func WithRecorder(r *record.Recorder) SessionOption {
 	return func(o *sessionOptions) error {
 		if r == nil {

@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gatework/expect/internal/redact"
 	"github.com/gatework/expect/internal/scan"
 )
 
@@ -54,9 +53,7 @@ func (s *Session) interact(ctx context.Context, input io.ReadCloser, output io.W
 	defer cancel()
 	in := startReader(input)
 	defer in.stop()
-	s.diagMu.Lock()
-	filter := s.rxFilter.Clone()
-	s.diagMu.Unlock()
+	filter := s.newOutputFilter()
 	it := &interaction{
 		s: s, l: l, o: o, out: output, filter: filter, in: in,
 		remote: newMember(l, o.output, mo), local: newEntries(o.input, ScopeCase, s),
@@ -76,7 +73,7 @@ type interaction struct {
 	l         *lease
 	o         interactOptions
 	out       io.Writer
-	filter    *redact.Filter
+	filter    *outputFilter
 	in        *reader
 	remote    *member  // output cases over the peer stream
 	local     []*entry // input cases
@@ -129,8 +126,7 @@ func (it *interaction) remoteStep(ctx context.Context) (bool, error) {
 		if !ok {
 			break
 		}
-		w := &waiter{o: matchOptions{}}
-		out := w.fire(ctx, it.remote, e, mt)
+		out := it.remote.fire(ctx, e, mt)
 		it.forwarded = max(0, it.forwarded-mt.End)
 		if out.err != nil || out.act == Return {
 			return true, out.err
@@ -315,7 +311,7 @@ func (it *interaction) outputTimeout(ctx context.Context) (bool, error) {
 		return true, ErrTimeout
 	}
 	it.timer.reset()
-	out := (&waiter{}).fireEvent(ctx, it.remote, e, 0)
+	out := it.remote.fireEvent(ctx, e, 0)
 	if out.err != nil || out.act == Return {
 		return true, out.err
 	}

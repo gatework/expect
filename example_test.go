@@ -40,7 +40,7 @@ func ExampleSession_Expect() {
 	s, err := expect.NewSession(local,
 		expect.WithLineEnding("\r"),
 		expect.WithLabel("router"),
-		expect.WithoutRecording(), // examples keep ~/.local/expect clean
+		expect.WithoutRecording(), // examples keep ~/.local/share/gatework/expect clean
 		expect.WithBefore(pager),
 	)
 	if err != nil {
@@ -76,6 +76,40 @@ func ExampleSession_Expect() {
 	// Output:
 	// logged in to router
 	// "show clock\r\n10:00:00 CST\r\n\r\nFri Nov 20 2026\r\n"
+}
+
+// ExampleSession_Exchange resets interfaces one at a time before
+// reconfiguring them. A session rule answers the confirmation each reset
+// asks for, and the Exchange keeps waiting for the prompt (exp_continue).
+func ExampleSession_Exchange() {
+	local, remote := net.Pipe()
+	go func() {
+		defer remote.Close()
+		buf := make([]byte, 64)
+		for range 2 {
+			_, _ = remote.Read(buf) // clear configuration interface ...
+			_, _ = io.WriteString(remote, "Continue? [Y/N]:")
+			_, _ = remote.Read(buf) // Y
+			_, _ = io.WriteString(remote, "Y\r\nInfo: Succeeded.\r\n[r1]")
+		}
+	}()
+	s, err := expect.NewSession(local, expect.WithLineEnding("\r"), expect.WithoutRecording(),
+		expect.WithBefore(expect.Case{Name: "confirm", Pattern: expect.Literal("[Y/N]:"), Handler: expect.ReplyLineThenContinue("Y")}))
+	if err != nil {
+		panic(err)
+	}
+	defer s.Close()
+	prompt := []expect.Case{{Name: "prompt", Pattern: expect.Literal("[r1]")}}
+	for _, ifc := range []string{"GE1/0/1", "GE1/0/2"} {
+		r, err := s.Exchange(context.Background(), "clear configuration interface "+ifc, prompt, expect.WithTimeout(30*time.Second))
+		if err != nil {
+			panic(err)
+		}
+		fmt.Printf("%s: %q\n", ifc, r.Output)
+	}
+	// Output:
+	// GE1/0/1: "Continue? [Y/N]:Y\r\nInfo: Succeeded.\r\n[r1]"
+	// GE1/0/2: "Continue? [Y/N]:Y\r\nInfo: Succeeded.\r\n[r1]"
 }
 
 func ExampleSession_StartBackground() {

@@ -30,7 +30,7 @@ See [example_test.go](example_test.go) (pager, background syslog watch) and
 
 ## Session transcripts
 
-Every session is recorded by default under `~/.local/expect/<date>/` as
+Every session is recorded by default under `~/.local/share/gatework/expect/<date>/` as
 `log` (grep-friendly, `<<` received / `>>` sent) and `cast` (replay with
 `asciinema play`); `jsonl` adds one event per match, send and close. Secrets
 registered with `Redact` and `RedactPattern` are masked.
@@ -38,7 +38,7 @@ registered with `Redact` and `RedactPattern` are masked.
 | Setting | Variable | Default |
 | --- | --- | --- |
 | on/off | `EXPECT_RECORD` | `on` |
-| directory | `EXPECT_RECORD_DIR` | `~/.local/expect` |
+| directory | `EXPECT_RECORD_DIR` | `~/.local/share/gatework/expect` |
 | formats | `EXPECT_RECORD_FORMATS` | `log,cast` |
 | file cap (MB) | `EXPECT_RECORD_MAX_SIZE` | `100` |
 | retention | `EXPECT_RECORD_MAX_AGE` | `720h` |

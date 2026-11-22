@@ -17,47 +17,52 @@ const stampLayout = "2006-01-02T15:04:05.000Z07:00"
 type textSink struct {
 	w    io.Writer
 	dir  Direction
-	open bool // a line of dir is in progress
-	cr   bool // a trailing CR was withheld
+	open bool   // a line of dir is in progress
+	cr   bool   // a trailing CR was withheld
+	buf  []byte // reused for each write
 }
 
 func (s *textSink) write(d Direction, p []byte, at time.Time) error {
-	var b bytes.Buffer
+	b := s.buf[:0]
 	if s.open && d != s.dir {
-		b.WriteByte('\n')
+		b = append(b, '\n')
 		s.open, s.cr = false, false
 	}
 	s.dir = d
-	stamp := at.Format(stampLayout)
+	var stamp [len(stampLayout) + 8]byte
+	head := append(at.AppendFormat(stamp[:0], stampLayout), marker(d)...)
 	if s.cr {
 		s.cr = false
 		if p[0] == '\n' {
 			p = p[1:]
-			b.WriteByte('\n')
+			b = append(b, '\n')
 			s.open = false
 		} else {
-			b.WriteByte('\r')
+			b = append(b, '\r')
 		}
 	}
 	for len(p) > 0 {
 		if !s.open {
-			b.WriteString(stamp)
-			b.WriteString(marker(d))
+			b = append(b, head...)
 			s.open = true
 		}
 		i := bytes.IndexByte(p, '\n')
 		if i < 0 {
-			if bytes.HasSuffix(p, []byte{'\r'}) {
+			if p[len(p)-1] == '\r' {
 				p, s.cr = p[:len(p)-1], true
 			}
-			b.Write(p)
+			b = append(b, p...)
 			break
 		}
-		b.Write(bytes.TrimSuffix(p[:i], []byte{'\r'}))
-		b.WriteByte('\n')
+		b = append(b, bytes.TrimSuffix(p[:i], []byte{'\r'})...)
+		b = append(b, '\n')
 		s.open, p = false, p[i+1:]
 	}
-	_, err := s.w.Write(b.Bytes())
+	s.buf = b
+	if len(b) == 0 {
+		return nil
+	}
+	_, err := s.w.Write(b)
 	return err
 }
 
@@ -77,6 +82,7 @@ type castSink struct {
 	size    int64
 	stopped bool
 	pending [3][]byte // per Direction
+	line    []byte    // reused for each event
 }
 
 type castHeader struct {
@@ -108,9 +114,12 @@ func (c *castSink) write(d Direction, p []byte, at time.Time) error {
 	if c.stopped {
 		return nil
 	}
-	data := slices.Concat(c.pending[d], p)
+	data := p
+	if len(c.pending[d]) > 0 {
+		data = slices.Concat(c.pending[d], p)
+	}
 	n := completeUTF8(data)
-	c.pending[d] = append([]byte(nil), data[n:]...)
+	c.pending[d] = append(c.pending[d][:0], data[n:]...)
 	if n == 0 {
 		return nil
 	}
@@ -122,18 +131,15 @@ func (c *castSink) write(d Direction, p []byte, at time.Time) error {
 }
 
 func (c *castSink) event(at time.Time, code string, data []byte) error {
-	text, err := json.Marshal(string(data))
-	if err != nil {
-		return err
-	}
-	line := make([]byte, 0, len(text)+24)
+	line := c.line[:0]
 	line = append(line, '[')
 	line = strconv.AppendFloat(line, at.Sub(c.start).Seconds(), 'f', 6, 64)
 	line = append(line, `, "`...)
 	line = append(line, code...)
 	line = append(line, `", `...)
-	line = append(line, text...)
+	line = appendJSONString(line, data)
 	line = append(line, "]\n"...)
+	c.line = line
 	if c.limit > 0 && c.size+int64(len(line)) > c.limit {
 		c.stopped = true
 		marker := []byte("[" + strconv.FormatFloat(at.Sub(c.start).Seconds(), 'f', 6, 64) + `, "m", "recording truncated: size limit"]` + "\n")
@@ -162,6 +168,46 @@ func (c *castSink) finish(at time.Time) error {
 		}
 	}
 	return nil
+}
+
+// appendJSONString appends data as a JSON string, as json.Marshal of
+// string(data) would decode: invalid UTF-8 becomes U+FFFD.
+func appendJSONString(dst, data []byte) []byte {
+	const hex = "0123456789abcdef"
+	dst = append(dst, '"')
+	for i := 0; i < len(data); {
+		c := data[i]
+		if c < utf8.RuneSelf {
+			switch {
+			case c == '"' || c == '\\':
+				dst = append(dst, '\\', c)
+			case c == '\n':
+				dst = append(dst, '\\', 'n')
+			case c == '\r':
+				dst = append(dst, '\\', 'r')
+			case c == '\t':
+				dst = append(dst, '\\', 't')
+			case c < 0x20:
+				dst = append(dst, '\\', 'u', '0', '0', hex[c>>4], hex[c&0xf])
+			default:
+				dst = append(dst, c)
+			}
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRune(data[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			dst = append(dst, `\ufffd`...)
+		case r == '\u2028' || r == '\u2029':
+			dst = append(dst, `\u202`...)
+			dst = append(dst, hex[r&0xf])
+		default:
+			dst = append(dst, data[i:i+size]...)
+		}
+		i += size
+	}
+	return append(dst, '"')
 }
 
 // completeUTF8 returns the length of b without a trailing incomplete

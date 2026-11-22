@@ -12,14 +12,16 @@ import (
 
 // entry is one case of a wait with its per-wait state.
 type entry struct {
-	c      Case
-	scope  RuleScope
-	index  int
-	st     scan.State
-	hits   int
-	limit  int
-	seen   bool   // a NoConsume match was observed ...
-	seenAt uint64 // ... at this buffer version
+	c     Case
+	scope RuleScope
+	index int
+	st    scan.State
+	hits  int
+	limit int
+	// seen is the NoConsume candidate already observed. Input only grows
+	// until it is consumed, so the same offsets mean the same candidate.
+	seen   bool
+	seenAt scan.Match
 }
 
 // member is one session taking part in a wait: a single Expect has one,
@@ -33,6 +35,9 @@ type member struct {
 	after   []*entry
 	rulesAt uint64
 	ruled   bool
+	collect bool   // record consumed bytes in out (WithOutput)
+	limit   int    // WithOutputLimit, or zero
+	out     []byte // bytes consumed by matches, in order
 }
 
 // waiter runs the matching loop over its members until a case returns or
@@ -70,11 +75,20 @@ func newEntries(cases []Case, scope RuleScope, s *Session) []*entry {
 }
 
 func newMember(l *lease, cases []Case, o matchOptions) *member {
-	return &member{l: l, s: l.s, cases: newEntries(cases, ScopeCase, l.s), call: newEntries(o.rules, ScopeCall, l.s)}
+	return &member{l: l, s: l.s, cases: newEntries(cases, ScopeCase, l.s), call: newEntries(o.rules, ScopeCall, l.s), collect: o.output, limit: o.outLimit}
 }
 
 func newWaiter(o matchOptions, wake chan struct{}, members ...*member) *waiter {
 	return &waiter{members: members, o: o, wake: wake, timer: newBudget(o.timeout), idle: newBudget(o.idle)}
+}
+
+// wait runs the wait and completes the Output of the returning member.
+func (w *waiter) wait(ctx context.Context) (*member, Result, error) {
+	m, r, err := w.run(ctx)
+	if m != nil {
+		r = m.finish(r)
+	}
+	return m, r, err
 }
 
 // run waits until a case returns, an error occurs or ctx ends.
@@ -136,7 +150,7 @@ func (w *waiter) step(ctx context.Context) outcome {
 
 func (w *waiter) stepMember(ctx context.Context, m *member) outcome {
 	if e, mt, ok := m.scanText(w.o); ok {
-		return w.fire(ctx, m, e, mt)
+		return m.fire(ctx, e, mt)
 	}
 	s := m.s
 	if w.o.stream != nil && len(s.rx) >= min(streamWindow, s.o.bufferLimit) {
@@ -144,7 +158,7 @@ func (w *waiter) stepMember(ctx context.Context, m *member) outcome {
 	}
 	if len(s.rx) > s.o.bufferLimit {
 		if e := m.event(patternFullBuffer); e != nil {
-			return w.fireEvent(ctx, m, e, len(s.rx))
+			return m.fireEvent(ctx, e, len(s.rx))
 		}
 		return outcome{m: m, r: m.pending(), err: ErrBufferLimit, ending: true}
 	}
@@ -160,7 +174,7 @@ func (w *waiter) end(ctx context.Context, m *member) outcome {
 	err := m.s.rxErr
 	if cleanEOF(err) {
 		if e := m.event(patternEOF, patternDefault); e != nil {
-			return w.fireEvent(ctx, m, e, len(m.s.rx))
+			return m.fireEvent(ctx, e, len(m.s.rx))
 		}
 	}
 	return outcome{m: m, r: m.pending(), err: m.s.closedErr(err), ending: true}
@@ -171,7 +185,7 @@ func (w *waiter) timeout(ctx context.Context) outcome {
 	for _, m := range w.members {
 		if e := m.event(patternTimeout, patternDefault); e != nil {
 			w.timer.reset()
-			out := w.fireEvent(ctx, m, e, 0)
+			out := m.fireEvent(ctx, e, 0)
 			if out.err == nil && out.act == Continue {
 				w.timer.reset()
 			}
@@ -182,36 +196,50 @@ func (w *waiter) timeout(ctx context.Context) outcome {
 	return outcome{m: m, r: m.pending(), err: ErrTimeout, ending: true}
 }
 
-// fire consumes a text match and runs its handler.
-func (w *waiter) fire(ctx context.Context, m *member, e *entry, mt scan.Match) outcome {
+// fire consumes a text match and runs its handler. It needs no waiter:
+// Interact and Relay fire matches of their own loops.
+func (m *member) fire(ctx context.Context, e *entry, mt scan.Match) outcome {
 	if out, ok := m.admit(e); !ok {
 		return out
 	}
 	if mt.End == mt.Start {
 		return outcome{m: m, r: m.pending(), err: ErrEmptyMatch, ending: true}
 	}
-	r := m.result(e, mt)
+	// A returning match without handler takes its text from Output, so
+	// a large output is copied once; an omitted match is not in Output.
+	lazy := m.collect && e.c.Handler == nil && !e.c.NoConsume
+	r := m.result(e, mt, lazy, lazy && !e.c.Omit)
 	if e.c.NoConsume {
-		e.seen, e.seenAt = true, m.s.version
-	} else {
-		m.l.consume(mt.End)
-		m.reset()
+		e.seen, e.seenAt = true, scan.Match{Start: mt.Start, End: mt.End}
+		return m.handle(ctx, e, r)
 	}
-	return w.handle(ctx, m, e, r)
+	keep := mt.End
+	if e.c.Omit {
+		keep = mt.Start
+	}
+	if out, ok := m.take(mt.End, keep); !ok {
+		return out
+	}
+	return m.handle(ctx, e, r)
 }
 
 // fireEvent runs an event case, consuming n pending bytes into Before.
-func (w *waiter) fireEvent(ctx context.Context, m *member, e *entry, n int) outcome {
+func (m *member) fireEvent(ctx context.Context, e *entry, n int) outcome {
 	if out, ok := m.admit(e); !ok {
 		return out
 	}
-	r := m.pending()
-	r.Before = string(m.s.rx[:n])
+	r := failed(m.s.id, nil)
+	if m.collect && e.c.Handler == nil {
+		r.tail, r.split = n, n
+	} else {
+		r.Before = string(m.s.rx[:n])
+	}
 	r.Name, r.Scope = e.c.Name, e.scope
 	r.CaseIndex, r.RuleIndex = e.indices()
-	m.l.consume(n)
-	m.reset()
-	return w.handle(ctx, m, e, r)
+	if out, ok := m.take(n, n); !ok {
+		return out
+	}
+	return m.handle(ctx, e, r)
 }
 
 // streamOut hands the older half of the pending window to the streaming
@@ -229,8 +257,8 @@ func (w *waiter) streamOut(ctx context.Context, m *member) outcome {
 	return outcome{m: m, r: r, act: act, err: err, fired: true}
 }
 
-func (w *waiter) handle(ctx context.Context, m *member, e *entry, r Result) outcome {
-	m.s.emit(ctx, Event{Op: OpMatch, Case: e.c.Name, Scope: e.scope, CaseIndex: r.CaseIndex, Bytes: len(r.Before) + len(r.Match)})
+func (m *member) handle(ctx context.Context, e *entry, r Result) outcome {
+	m.s.emit(ctx, Event{Op: OpMatch, Case: e.c.Name, Scope: e.scope, CaseIndex: r.CaseIndex, Bytes: max(r.tail, len(r.Before)+len(r.Match))})
 	if e.c.Handler == nil {
 		return outcome{m: m, r: r, act: Return, fired: true}
 	}
@@ -268,11 +296,11 @@ func (m *member) scanText(o matchOptions) (*entry, scan.Match, bool) {
 		var best *entry
 		var bm scan.Match
 		for _, e := range g {
-			if !e.c.Pattern.isText() || e.c.NoConsume && e.seen && e.seenAt == m.s.version {
+			if !e.c.Pattern.isText() {
 				continue
 			}
 			mt, ok := e.c.Pattern.m.Find(m.s.rx, &e.st, lim)
-			if !ok {
+			if !ok || e.seen && mt.Start == e.seenAt.Start && mt.End == e.seenAt.End {
 				continue
 			}
 			if best == nil || mt.Start < bm.Start {
@@ -287,6 +315,20 @@ func (m *member) scanText(o matchOptions) (*entry, scan.Match, bool) {
 		}
 	}
 	return nil, scan.Match{}, false
+}
+
+// hold returns how many pending bytes no text case or rule of any group
+// can still match once more input arrives.
+func (m *member) hold() int {
+	cut := len(m.s.rx)
+	for _, g := range m.groups() {
+		for _, e := range g {
+			if e.c.Pattern.isText() {
+				cut = min(cut, e.c.Pattern.m.Hold(m.s.rx))
+			}
+		}
+	}
+	return cut
 }
 
 // event returns the first case, in priority order, with one of kinds.
@@ -311,6 +353,21 @@ func (m *member) refreshRules() {
 	m.rulesAt, m.ruled = rs.version, true
 }
 
+// take consumes the first n pending bytes of a match, collecting the
+// first keep of them when asked, and forgets search progress. It fails
+// the wait when the collected output exceeds its limit.
+func (m *member) take(n, keep int) (outcome, bool) {
+	if m.collect {
+		m.out = append(m.out, m.s.rx[:keep]...)
+	}
+	m.l.consume(n)
+	m.reset()
+	if m.limit > 0 && len(m.out) > m.limit {
+		return outcome{m: m, r: m.pending(), err: ErrOutputLimit, ending: true}, false
+	}
+	return outcome{}, true
+}
+
 // reset forgets search progress after the buffer was consumed.
 func (m *member) reset() {
 	for _, g := range m.groups() {
@@ -321,13 +378,51 @@ func (m *member) reset() {
 	}
 }
 
+// finish completes the Output of a result this member returns.
+func (m *member) finish(r Result) Result {
+	if m.collect {
+		return m.output(r)
+	}
+	return r
+}
+
+// output sets r.Output from the collected bytes and fills a lazy result
+// with substrings of it.
+func (m *member) output(r Result) Result {
+	out := string(m.out)
+	r.Output = out
+	if r.tail == 0 {
+		return r
+	}
+	buf := out[len(out)-r.tail:]
+	r.Before = buf[:r.split]
+	if r.lazyMatch {
+		r.Match = buf[r.split:]
+		for i, c := range r.Captures {
+			if c.Matched {
+				r.Captures[i].Text = buf[c.Start:c.End]
+			}
+		}
+	}
+	r.tail, r.split, r.lazyMatch = 0, 0, false
+	return r
+}
+
 func (m *member) pending() Result { return failed(m.s.id, m.s.rx) }
 
-func (m *member) result(e *entry, mt scan.Match) Result {
+// result describes a text match. A lazy result leaves Before, and with
+// lazyMatch also Match and captures, to output.
+func (m *member) result(e *entry, mt scan.Match, lazy, lazyMatch bool) Result {
 	buf := m.s.rx[:mt.End]
-	r := Result{
-		Session: m.s.id, Name: e.c.Name, Scope: e.scope, Start: mt.Start, End: mt.End,
-		Before: string(buf[:mt.Start]), Match: string(buf[mt.Start:]), groups: slices.Clone(mt.Groups),
+	r := Result{Session: m.s.id, Name: e.c.Name, Scope: e.scope, Start: mt.Start, End: mt.End, groups: slices.Clone(mt.Groups)}
+	switch {
+	case lazyMatch:
+		r.tail, r.split, r.lazyMatch = mt.End, mt.Start, true
+	case lazy:
+		r.tail, r.split = mt.Start, mt.Start
+		r.Match = string(buf[mt.Start:])
+	default:
+		r.Before, r.Match = string(buf[:mt.Start]), string(buf[mt.Start:])
 	}
 	r.CaseIndex, r.RuleIndex = e.indices()
 	names := e.c.Pattern.m.Names()
@@ -337,7 +432,7 @@ func (m *member) result(e *entry, mt scan.Match) Result {
 		if g < len(names) {
 			c.Name = names[g]
 		}
-		if c.Matched {
+		if c.Matched && !lazyMatch {
 			c.Text = string(buf[a:b])
 		}
 		r.Captures = append(r.Captures, c)

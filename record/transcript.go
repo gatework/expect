@@ -118,20 +118,21 @@ func (t *Transcript) open(f Format, path string, m Meta, start time.Time, maxMB 
 		return fmt.Errorf("record: %s: %w", f, err)
 	}
 	limit := int64(maxMB) << 20
+	bf := newBufferedFile(file)
 	switch f {
 	case FormatLog:
-		t.text = &textSink{w: &capped{w: file, limit: limit, marker: "\n--- recording truncated: size limit ---\n"}}
+		t.text = &textSink{w: &capped{w: bf, limit: limit, marker: "\n--- recording truncated: size limit ---\n"}}
 	case FormatJSONL:
-		w := &capped{w: file, limit: limit, marker: `{"msg":"record: truncated: size limit"}` + "\n"}
+		w := &capped{w: bf, limit: limit, marker: `{"msg":"record: truncated: size limit"}` + "\n"}
 		t.events = slog.NewJSONHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug})
 	case FormatCast:
-		c, err := newCastSink(file, m, start, limit)
+		c, err := newCastSink(bf, m, start, limit)
 		if err != nil {
-			return errors.Join(fmt.Errorf("record: cast: %w", err), file.Close())
+			return errors.Join(fmt.Errorf("record: cast: %w", err), bf.Close())
 		}
 		t.cast = c
 	}
-	t.closers = append(t.closers, file)
+	t.closers = append(t.closers, bf)
 	t.paths = append(t.paths, path)
 	return nil
 }

@@ -59,6 +59,11 @@ func (l *lease) pull() bool {
 		return false
 	}
 	chunks, err := s.in.take()
+	n := 0
+	for _, c := range chunks {
+		n += len(c)
+	}
+	s.rx = slices.Grow(s.rx, n)
 	for _, c := range chunks {
 		s.rx = append(s.rx, c...)
 	}
@@ -72,13 +77,23 @@ func (l *lease) pull() bool {
 	return true
 }
 
-// consume drops the first n pending bytes.
+// shrinkCap is the capacity above which a mostly empty buffer is
+// reallocated, so one large output does not pin its memory.
+const shrinkCap = 1 << 20
+
+// consume drops the first n pending bytes in place. Nothing aliases rx:
+// Results copy their text out of it.
 func (l *lease) consume(n int) {
 	if n <= 0 {
 		return
 	}
 	s := l.s
-	s.rx = slices.Clone(s.rx[n:])
+	rest := len(s.rx) - n
+	if cap(s.rx) > shrinkCap && rest < cap(s.rx)/4 {
+		s.rx = slices.Clone(s.rx[n:])
+	} else {
+		s.rx = s.rx[:copy(s.rx, s.rx[n:])]
+	}
 	s.version++
 }
 

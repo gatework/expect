@@ -1,6 +1,7 @@
 package expect
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -48,6 +49,9 @@ type Session struct {
 	diagMu   sync.Mutex // guards the redaction filters and the transcript writes
 	rxFilter *redact.Filter
 	txFilter *redact.Filter
+	// redactGen changes whenever secrets or rules are added, so copies of
+	// rxFilter held by Interact and Relay can catch up.
+	redactGen atomic.Uint64
 
 	// scope ends when the session closes; it bounds handler contexts. It
 	// is lifecycle state, not a request context.
@@ -134,6 +138,7 @@ func (s *Session) Redact(secrets ...string) error {
 	if err := s.rxFilter.AddSecrets(secrets...); err != nil {
 		return &ConfigError{Option: "secret", Reason: "empty", Cause: err}
 	}
+	defer s.redactGen.Add(1)
 	return s.txFilter.AddSecrets(secrets...)
 }
 
@@ -148,6 +153,7 @@ func (s *Session) RedactPattern(re *regexp.Regexp) error {
 	defer s.diagMu.Unlock()
 	s.rxFilter.AddRule(re)
 	s.txFilter.AddRule(re)
+	s.redactGen.Add(1)
 	return nil
 }
 
@@ -208,6 +214,9 @@ func (s *Session) readLoop() {
 
 // normalize copies p, applying the input filters.
 func (s *Session) normalize(p []byte) []byte {
+	if !s.o.stripParity && !s.o.removeNulls {
+		return bytes.Clone(p)
+	}
 	out := make([]byte, 0, len(p))
 	for _, c := range p {
 		if s.o.stripParity {
@@ -219,6 +228,43 @@ func (s *Session) normalize(p []byte) []byte {
 		out = append(out, c)
 	}
 	return out
+}
+
+// outputFilter is a copy of the receive filter for one output stream
+// (Interact or Relay output) that follows later Redact calls.
+type outputFilter struct {
+	s   *Session
+	f   *redact.Filter
+	gen uint64
+}
+
+func (s *Session) newOutputFilter() *outputFilter {
+	s.diagMu.Lock()
+	defer s.diagMu.Unlock()
+	return &outputFilter{s: s, f: s.rxFilter.Clone(), gen: s.redactGen.Load()}
+}
+
+// Append filters p with the current secrets.
+func (o *outputFilter) Append(p []byte) []byte {
+	o.sync()
+	return o.f.Append(p)
+}
+
+// Finish releases what the filter holds.
+func (o *outputFilter) Finish() []byte {
+	o.sync()
+	return o.f.Finish()
+}
+
+// sync adopts secrets and rules added since the last call.
+func (o *outputFilter) sync() {
+	if o.s.redactGen.Load() == o.gen {
+		return
+	}
+	o.s.diagMu.Lock()
+	defer o.s.diagMu.Unlock()
+	o.f.Sync(o.s.rxFilter)
+	o.gen = o.s.redactGen.Load()
 }
 
 func (s *Session) recordReceived(p []byte) error {

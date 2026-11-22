@@ -34,6 +34,8 @@ type matchOptions struct {
 	rules      []Case
 	stream     Handler
 	window     int
+	output     bool
+	outLimit   int
 }
 
 // WithTimeout sets the relative timer of the wait, which includes handler
@@ -106,6 +108,32 @@ func WithSearchWindow(n int) MatchOption {
 			return configError("search window", "negative")
 		}
 		o.window = n
+		return nil
+	}
+}
+
+// WithOutput fills Result.Output with every byte the wait consumed, in
+// order: the text of cases and rules that continued (answered questions,
+// pagers) followed by the returning case. Before and Match of the
+// returning case then share Output's memory. Bytes handed to
+// WithStreamingFallback are not collected. Exchange always collects.
+func WithOutput() MatchOption {
+	return func(o *matchOptions) error {
+		o.output = true
+		return nil
+	}
+}
+
+// WithOutputLimit is WithOutput that fails the wait with ErrOutputLimit
+// once more than n bytes were collected, as soon as the match that
+// crosses it is consumed and before its handler runs. Zero means no
+// limit.
+func WithOutputLimit(n int) MatchOption {
+	return func(o *matchOptions) error {
+		if n < 0 {
+			return configError("output limit", "negative")
+		}
+		o.output, o.outLimit = true, n
 		return nil
 	}
 }

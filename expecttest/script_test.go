@@ -14,7 +14,8 @@ func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
 
 func TestPipe(t *testing.T) {
 	t.Parallel()
-	s, p := expecttest.Pipe(t, []expecttest.Step{
+	// Pipe cleanup waits for the peer and checks that the script finished.
+	s, _ := expecttest.Pipe(t, []expecttest.Step{
 		expecttest.Say("Password: "),
 		expecttest.Hear("s3cret\r"),
 		expecttest.Say("\r\nrouter#"),
@@ -25,9 +26,6 @@ func TestPipe(t *testing.T) {
 	}, expect.WithTimeout(time.Second))
 	if err != nil || r.Name != "prompt" {
 		t.Fatalf("got %+v %v", r, err)
-	}
-	if !p.Done() {
-		t.Fatal("script unfinished")
 	}
 }
 
