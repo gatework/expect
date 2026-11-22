@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gatework/expect"
+	"github.com/gatework/expect/record"
 )
 
 // benchSession runs one Expect per iteration against a peer that writes
@@ -81,4 +82,61 @@ func BenchmarkSession_PagerContinue(b *testing.B) {
 		_ = s.Close()
 		_ = remote.Close()
 	}
+}
+
+// BenchmarkGroup_ChattyMember has one member stream output while three
+// quiet members hold unmatched text, all under 30 rules.
+func BenchmarkGroup_ChattyMember(b *testing.B) {
+	var cases []expect.Case
+	for i := range 29 {
+		cases = append(cases, expect.Case{Pattern: expect.MustCompile(fmt.Sprintf(`(?s)(?:yes|no) %d.*\?`, i))})
+	}
+	cases = append(cases, expect.Case{Pattern: expect.Literal("router#")})
+	quiet := strings.Repeat("syslog line without a question\n", 2000)
+	b.SetBytes(int64(len(configBody)))
+	for b.Loop() {
+		var sessions []*expect.Session
+		var remotes []net.Conn
+		for range 4 {
+			local, remote := net.Pipe()
+			s, err := expect.NewSession(local, expect.WithoutRecording(), expect.WithBufferLimit(64<<20))
+			if err != nil {
+				b.Fatal(err)
+			}
+			sessions, remotes = append(sessions, s), append(remotes, remote)
+		}
+		for _, r := range remotes[1:] {
+			go func() { _, _ = io.WriteString(r, quiet) }()
+		}
+		go func() {
+			for at := 0; at < len(configBody); at += 4096 {
+				_, _ = remotes[0].Write(configBody[at:min(at+4096, len(configBody))])
+			}
+		}()
+		g, err := expect.NewGroup(sessions...)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if _, _, err := g.Expect(b.Context(), cases); err != nil {
+			b.Fatal(err)
+		}
+		for i, s := range sessions {
+			_ = s.Close()
+			_ = remotes[i].Close()
+		}
+	}
+}
+
+// BenchmarkSession_LargeOutputRecorded is LargeOutput with the default
+// recording formats plus jsonl written to a temporary directory.
+func BenchmarkSession_LargeOutputRecorded(b *testing.B) {
+	c := record.DefaultConfig()
+	c.Dir = b.TempDir()
+	c.Formats = []record.Format{record.FormatLog, record.FormatCast, record.FormatJSONL}
+	r, err := record.New(c)
+	if err != nil {
+		b.Fatal(err)
+	}
+	prompt := expect.MustCompile(`(?m)^[\w.-]+#[ \t]*$`)
+	benchSession(b, configBody, []expect.Case{{Pattern: prompt}}, expect.WithRecorder(r))
 }

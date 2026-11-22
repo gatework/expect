@@ -32,6 +32,11 @@ All notable changes are recorded here, following Keep a Changelog.
   chunks are appended with one growth; unfiltered input is copied with
   one `bytes.Clone`; event attributes are built only when debug logging
   is enabled.
+- Transcript files are written through a 64 KiB buffer, flushed within
+  one second, when full and at Close, instead of one system call per
+  chunk; the log and cast writers reuse their buffers and encode JSON by
+  hand (recorded large output: −27% time, −85% allocations). A crash now
+  loses at most about one second of transcript.
 
 ## [0.1.0] - 2026-11-20
 

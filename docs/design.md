@@ -45,7 +45,7 @@
 
 ## 录像
 
-`<Dir>/<YYYY-MM-DD>/<label>_<HHMMSS>_<session>.{log,cast,jsonl}`，目录 0700、文件 0600。新建 Recorder 时删除超过 `MaxAge` 的日期目录（只认日期名）。单文件到 `MaxSizeMB` 写截断标记后停止。`Required=false` 时写入失败只告警并丢弃该文件。
+`<Dir>/<YYYY-MM-DD>/<label>_<HHMMSS>_<session>.{log,cast,jsonl}`，目录 0700、文件 0600。新建 Recorder 时删除超过 `MaxAge` 的日期目录（只认日期名）。单文件到 `MaxSizeMB` 写截断标记后停止。每个文件经 64 KiB 缓冲写入：缓冲满、首个未落盘写入后 1 秒（定时器，不常驻协程）、`Close` 时落盘；进程崩溃最多丢失约 1 秒录像。`Required=false` 时写入失败只告警并丢弃该文件。
 
 | 变量 | 默认 |
 |---|---|
