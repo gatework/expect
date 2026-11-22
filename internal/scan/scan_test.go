@@ -137,7 +137,15 @@ func FuzzFindChunks(f *testing.F) {
 		Regexp(regexp.MustCompile(`.b#`)),
 		mustLiteral(f, "word:", false),
 		mustLiteral(f, "WORD", true),
+		mustLiteral(f, "sk:", true),
+		mustGlob(f, "*r#"),
+		Regexp(regexp.MustCompile(`(?i)ques?tion \[y/n\]`)),
+		Regexp(regexp.MustCompile(`(?s)Bu.*\[OK\]`)),
+		Regexp(regexp.MustCompile("a\uFFFDb")),
 	}
+	f.Add([]byte("Are you SURE? [Y/N]"), uint8(4), uint8(7))
+	f.Add([]byte("x\xe2\x84\xaak:"), uint8(1), uint8(4))
+	f.Add([]byte("a\xffb"), uint8(1), uint8(8))
 	f.Fuzz(func(t *testing.T, data []byte, step, which uint8) {
 		m := matchers[int(which)%len(matchers)]
 		var st State
@@ -148,6 +156,16 @@ func FuzzFindChunks(f *testing.F) {
 			var fresh State
 			want, wantOK := m.Find(data[:end], &fresh, lim)
 			got, ok := m.Find(data[:end], &st, lim)
+			if m.re != nil {
+				// The prefilter must never hide a match the regexp finds.
+				e := end
+				if !lim.Final {
+					e = completeUTF8(data[:end])
+				}
+				if ref := m.re.FindIndex(data[:e]); (ref != nil) != wantOK || wantOK && (ref[0] != want.Start || ref[1] != want.End) {
+					t.Fatalf("prefix %d: matcher %+v %v, regexp %v", end, want, wantOK, ref)
+				}
+			}
 			if ok != wantOK || ok && (got.Start != want.Start || got.End != want.End) {
 				t.Fatalf("prefix %d: resumed %+v %v, fresh %+v %v", end, got, ok, want, wantOK)
 			}
@@ -156,6 +174,37 @@ func FuzzFindChunks(f *testing.F) {
 			}
 		}
 	})
+}
+
+func mustGlob(tb testing.TB, pattern string) *Matcher {
+	tb.Helper()
+	re, err := Glob(pattern, false)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return Regexp(re)
+}
+
+func TestRequiredLiteral(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		expr, want string
+		fold       bool
+	}{
+		{`(?m)^\S+#$`, "#", false},
+		{`(?s:.*router#)`, "router#", false},
+		{`(?i)question 3 \[Y/N\]:`, "tion 3 [y/n]:", true}, // 's' folds to U+017F
+		{`(?i)Kelvin`, "elvin", true},                      // 'k' folds to U+212A
+		{`a|b`, "", false},
+		{`(?:ab)?c`, "c", false},
+		{`(x(yz)+)`, "yz", false},
+	}
+	for _, tt := range tests {
+		got, fold := requiredLiteral(regexp.MustCompile(tt.expr))
+		if string(got) != tt.want || len(got) > 0 && fold != tt.fold {
+			t.Errorf("%s: got %q fold %v, want %q fold %v", tt.expr, got, fold, tt.want, tt.fold)
+		}
+	}
 }
 
 func BenchmarkFind_LargeOutput(b *testing.B) {
@@ -170,4 +219,30 @@ func BenchmarkFind_LargeOutput(b *testing.B) {
 			m.Find(buf, &st, Limits{})
 		}
 	}
+}
+
+func benchFind(b *testing.B, m *Matcher) {
+	b.Helper()
+	chunk := []byte("interface GigabitEthernet0/1\n description uplink\n")
+	var buf []byte
+	for b.Loop() {
+		buf = buf[:0]
+		var st State
+		for range 2000 {
+			buf = append(buf, chunk...)
+			m.Find(buf, &st, Limits{})
+		}
+	}
+}
+
+func BenchmarkFind_Glob(b *testing.B) {
+	re, err := Glob("*router#", false)
+	if err != nil {
+		b.Fatal(err)
+	}
+	benchFind(b, Regexp(re))
+}
+
+func BenchmarkFind_DotAll(b *testing.B) {
+	benchFind(b, Regexp(regexp.MustCompile(`(?s)Building.*\[OK\]`)))
 }

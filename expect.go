@@ -30,9 +30,47 @@ func (s *Session) Expect(ctx context.Context, cases []Case, opts ...MatchOption)
 	defer l.release()
 	ctx, cancel := s.scoped(ctx)
 	defer cancel()
+	return s.wait(ctx, l, cases, o, false)
+}
+
+// Exchange sends line followed by the line ending, then waits like
+// Expect. It takes the input before sending, so a busy session fails with
+// ErrBusy without sending anything; the relative timer starts after the
+// send. Input that arrived before the call stays pending and is matched
+// first, as with Expect.
+//
+// Result.Output holds every byte the wait consumed, in order: the text of
+// cases and rules that continued (answered confirmations, pagers) and of
+// the returning case. On failure the unconsumed input is in Before.
+// Bytes handed to WithStreamingFallback are not collected.
+func (s *Session) Exchange(ctx context.Context, line string, cases []Case, opts ...MatchOption) (Result, error) {
+	o, err := s.prepare(cases, opts)
+	if err != nil {
+		return failed(s.id, nil), err
+	}
+	l, err := s.acquire(nil)
+	if err != nil {
+		return failed(s.id, nil), err
+	}
+	defer l.release()
+	ctx, cancel := s.scoped(ctx)
+	defer cancel()
+	if _, err := s.SendLine(ctx, line); err != nil {
+		return failed(s.id, s.rx), err
+	}
+	return s.wait(ctx, l, cases, o, true)
+}
+
+// wait runs one foreground wait on a held lease.
+func (s *Session) wait(ctx context.Context, l *lease, cases []Case, o matchOptions, collect bool) (Result, error) {
 	start := time.Now()
-	w := newWaiter(o, l.wake, newMember(l, cases, o))
+	m := newMember(l, cases, o)
+	m.collect = collect
+	w := newWaiter(o, l.wake, m)
 	_, r, err := w.run(ctx)
+	if collect {
+		r.Output = string(m.out)
+	}
 	s.emit(ctx, Event{Op: OpExpect, Case: r.Name, Scope: r.Scope, CaseIndex: r.CaseIndex, Duration: time.Since(start), Err: classify(err)})
 	return r, err
 }

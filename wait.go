@@ -33,6 +33,8 @@ type member struct {
 	after   []*entry
 	rulesAt uint64
 	ruled   bool
+	collect bool   // record consumed bytes in out (Exchange)
+	out     []byte // bytes consumed by matches, in order
 }
 
 // waiter runs the matching loop over its members until a case returns or
@@ -194,8 +196,7 @@ func (w *waiter) fire(ctx context.Context, m *member, e *entry, mt scan.Match) o
 	if e.c.NoConsume {
 		e.seen, e.seenAt = true, m.s.version
 	} else {
-		m.l.consume(mt.End)
-		m.reset()
+		m.take(mt.End)
 	}
 	return w.handle(ctx, m, e, r)
 }
@@ -209,8 +210,7 @@ func (w *waiter) fireEvent(ctx context.Context, m *member, e *entry, n int) outc
 	r.Before = string(m.s.rx[:n])
 	r.Name, r.Scope = e.c.Name, e.scope
 	r.CaseIndex, r.RuleIndex = e.indices()
-	m.l.consume(n)
-	m.reset()
+	m.take(n)
 	return w.handle(ctx, m, e, r)
 }
 
@@ -309,6 +309,16 @@ func (m *member) refreshRules() {
 	}
 	m.before, m.after = newEntries(rs.before, ScopeBefore, m.s), newEntries(rs.after, ScopeAfter, m.s)
 	m.rulesAt, m.ruled = rs.version, true
+}
+
+// take consumes the first n pending bytes of a match, collecting them
+// when asked, and forgets search progress.
+func (m *member) take(n int) {
+	if m.collect {
+		m.out = append(m.out, m.s.rx[:n]...)
+	}
+	m.l.consume(n)
+	m.reset()
 }
 
 // reset forgets search progress after the buffer was consumed.

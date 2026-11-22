@@ -35,9 +35,11 @@
 
 ## 匹配
 
-每次扫描按组：Before → 用例 → WithRules → After。第一个有匹配的组胜出；组内取最早开始的匹配，声明顺序破平（`WithMatchOrder(Declaration)` 取首个声明）。匹配消费到其结尾后运行处理器；`Continue` 重置相对计时器，`ContinueKeepTimer` 不重置。
+每次扫描按组：Before → 用例 → WithRules → After。第一个有匹配的组胜出；组内取最早开始的匹配，声明顺序破平（`WithMatchOrder(Declaration)` 取首个声明）。匹配消费到其结尾后运行处理器；`Continue` 重置相对计时器，`ContinueKeepTimer` 不重置。二者对应 Tcl 的 `exp_continue` 与 `exp_continue -continue_timer`；便捷包装 `Then`/`ReplyLineThenContinue` 用前者，`ThenKeepTimer` 用后者。
 
-增量：缓冲只追加时，字面量从上次末尾回退 `len-1` 处续扫；可证明不跨行、不锚定文本开头的正则从最后一行行首续扫；其余正则全量扫描，可用 `WithSearchWindow(n)` 限定尾部窗口。任何消费或规则切换都重置进度。
+`Exchange(ctx, line, cases)` = 先取租约、再 `SendLine`、再等待，计时器从发送后开始；`Result.Output` 按顺序收集本次等待消费的全部字节（含继续的应答与分页），流式回退交出的字节除外。取租约失败（`ErrBusy`）时不发送任何内容。逐接口“先初始化再配置”用会话 Before 规则应答 `[Y/N]`，每个接口一次 `Exchange`。
+
+增量：缓冲只追加时，字面量从上次末尾回退 `len-1` 处续扫；可证明不跨行、不锚定文本开头的正则从最后一行行首续扫；其余正则全量扫描，可用 `WithSearchWindow(n)` 限定尾部窗口。所有正则（含 Glob 与忽略大小写字面量）先做必需字面量预筛：顶层串接上每个匹配都包含的最长字面量（忽略大小写时只取折叠集全在 ASCII 内的字符，跳过 U+FFFD），增量查找；不在缓冲中则不运行正则。任何消费或规则切换都重置进度。
 
 不完整的尾部 UTF-8 在更多字节或 EOF 到来前不参与正则搜索。
 
@@ -56,7 +58,7 @@
 
 ## 运维用法
 
-- 收集大输出：在分页规则处理器里累积 `r.Before`；或 `WithStreamingFallback` 把未匹配输出分块交出，配合 `WithSearchWindow(4<<10)` 保持提示符检测线性。
+- 收集大输出：`Exchange` 的 `Result.Output` 已含分页前后的全部文本；或 `WithStreamingFallback` 把未匹配输出分块交出，配合 `WithSearchWindow(4<<10)` 保持提示符检测线性。
 - 设备卡住：`WithIdleTimeout` 区分“慢”和“停”。
 - 静默设备：`Timeout()` 用例发送回车并 `Continue`（处理器获得新预算）。
 - 配置密文：`RedactPattern(regexp.MustCompile(`cipher (\S+)`))` 只遮蔽子匹配。

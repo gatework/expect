@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"regexp/syntax"
 	"slices"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -33,6 +34,8 @@ type Matcher struct {
 	fold      bool           // case-insensitive literal or line
 	re        *regexp.Regexp // regexp, or the folded form of a literal
 	lineLocal bool           // re can never match across a '\n'
+	req       []byte         // bytes every match of re contains; nil when unknown
+	reqFold   bool           // req is lower-case ASCII compared case-insensitively
 	parts     []*Matcher     // conjunction members
 }
 
@@ -58,8 +61,9 @@ type Limits struct {
 // State is per-wait search progress for one Matcher. The zero value starts
 // at the beginning of the buffer.
 type State struct {
-	from  int
-	parts []State
+	from    int
+	reqFrom int // no occurrence of the required literal starts before it
+	parts   []State
 }
 
 // Literal matches text byte for byte, or case-insensitively when fold is set.
@@ -74,6 +78,7 @@ func Literal(text []byte, fold bool) (*Matcher, error) {
 			return nil, err
 		}
 		m.re, m.lineLocal = re, !bytes.ContainsRune(text, '\n')
+		m.req, m.reqFold = requiredLiteral(re)
 	}
 	return m, nil
 }
@@ -93,7 +98,9 @@ func Line(text []byte, fold bool) (*Matcher, error) {
 // Regexp searches with re, which the Matcher borrows: re must not be
 // changed (for example with Longest) afterwards.
 func Regexp(re *regexp.Regexp) *Matcher {
-	return &Matcher{kind: kindRegexp, re: re, lineLocal: isLineLocal(re)}
+	m := &Matcher{kind: kindRegexp, re: re, lineLocal: isLineLocal(re)}
+	m.req, m.reqFold = requiredLiteral(re)
+	return m
 }
 
 // All matches when every part matches somewhere in the buffer, in any
@@ -167,7 +174,7 @@ func (m *Matcher) Hold(buf []byte) int {
 
 // Reset forgets all progress; call it after the buffer was consumed.
 func (s *State) Reset() {
-	s.from = 0
+	s.from, s.reqFrom = 0, 0
 	for i := range s.parts {
 		s.parts[i].Reset()
 	}
@@ -210,6 +217,12 @@ func (m *Matcher) findRegexp(buf []byte, st *State, lim Limits) (Match, bool) {
 		from = min(st.from, end)
 	}
 	start := windowStart(from, end, lim.Window)
+	if !m.required(buf[:end], st, lim.Window) {
+		if m.lineLocal {
+			st.from = max(start, bytes.LastIndexByte(buf[:end], '\n')+1)
+		}
+		return Match{}, false
+	}
 	loc := m.re.FindSubmatchIndex(buf[start:end])
 	if loc == nil {
 		if m.lineLocal {
@@ -239,6 +252,127 @@ func (m *Matcher) findAll(buf []byte, st *State, lim Limits) (Match, bool) {
 		start, end = min(start, pm.Start), max(end, pm.End)
 	}
 	return Match{Start: start, End: end, Groups: []int{start, end}}, true
+}
+
+// required reports whether buf may hold a match: without the required
+// literal no match exists, so the regexp need not run. It resumes where
+// the previous search on the growing buffer stopped.
+func (m *Matcher) required(buf []byte, st *State, window int) bool {
+	if m.req == nil {
+		return true
+	}
+	from := windowStart(st.reqFrom, len(buf), window)
+	var i int
+	if m.reqFold {
+		i = indexFoldASCII(buf[from:], m.req)
+	} else {
+		i = bytes.Index(buf[from:], m.req)
+	}
+	if i < 0 {
+		st.reqFrom = max(from, len(buf)-len(m.req)+1)
+		return false
+	}
+	st.reqFrom = from + i
+	return true
+}
+
+// indexFoldASCII returns the first offset where s equals the lower-case
+// ASCII lit ignoring ASCII case, or -1.
+func indexFoldASCII(s, lit []byte) int {
+	first := lit[0]
+	for i := 0; i+len(lit) <= len(s); i++ {
+		if lowerASCII(s[i]) == first && equalFoldASCII(s[i+1:i+len(lit)], lit[1:]) {
+			return i
+		}
+	}
+	return -1
+}
+
+func equalFoldASCII(a, lower []byte) bool {
+	for i, c := range lower {
+		if lowerASCII(a[i]) != c {
+			return false
+		}
+	}
+	return true
+}
+
+func lowerASCII(c byte) byte {
+	if 'A' <= c && c <= 'Z' {
+		return c + 'a' - 'A'
+	}
+	return c
+}
+
+// requiredLiteral returns the longest literal that every match of re
+// contains, found along the top-level concatenation. A case-folded literal
+// keeps only runes whose whole fold orbit is ASCII, lower-cased, so a
+// byte-wise ASCII comparison is exact. Literal U+FFFD is skipped because
+// it also matches invalid UTF-8 input.
+func requiredLiteral(re *regexp.Regexp) ([]byte, bool) {
+	t, err := syntax.Parse(re.String(), syntax.Perl)
+	if err != nil {
+		return nil, false
+	}
+	var best []byte
+	var bestFold bool
+	consider := func(seg []byte, fold bool) {
+		if len(seg) > len(best) {
+			best, bestFold = seg, fold
+		}
+	}
+	var walk func(r *syntax.Regexp)
+	walk = func(r *syntax.Regexp) {
+		switch r.Op { //nolint:exhaustive // only operators whose operand every match contains
+		case syntax.OpCapture, syntax.OpPlus:
+			walk(r.Sub[0])
+		case syntax.OpRepeat:
+			if r.Min >= 1 {
+				walk(r.Sub[0])
+			}
+		case syntax.OpConcat:
+			for _, sub := range r.Sub {
+				walk(sub)
+			}
+		case syntax.OpLiteral:
+			fold := r.Flags&syntax.FoldCase != 0
+			var seg []byte
+			for _, c := range r.Rune {
+				if ok, lower := literalRune(c, fold); ok {
+					seg = utf8.AppendRune(seg, lower)
+					continue
+				}
+				consider(seg, fold)
+				seg = nil
+			}
+			consider(seg, fold)
+		}
+	}
+	walk(t)
+	return best, bestFold
+}
+
+// literalRune reports whether c can take part in a required literal and
+// returns the form to search for.
+func literalRune(c rune, fold bool) (bool, rune) {
+	if c == utf8.RuneError {
+		return false, c
+	}
+	if !fold {
+		return true, c
+	}
+	for f := unicode.SimpleFold(c); ; f = unicode.SimpleFold(f) {
+		if f >= utf8.RuneSelf {
+			return false, c
+		}
+		if f == c {
+			break
+		}
+	}
+	if c >= utf8.RuneSelf {
+		return false, c
+	}
+	return true, rune(lowerASCII(byte(c)))
 }
 
 func windowStart(from, end, window int) int {

@@ -1,6 +1,7 @@
 package expect
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -208,6 +209,9 @@ func (s *Session) readLoop() {
 
 // normalize copies p, applying the input filters.
 func (s *Session) normalize(p []byte) []byte {
+	if !s.o.stripParity && !s.o.removeNulls {
+		return bytes.Clone(p)
+	}
 	out := make([]byte, 0, len(p))
 	for _, c := range p {
 		if s.o.stripParity {

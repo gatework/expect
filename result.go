@@ -66,8 +66,11 @@ type Result struct {
 	// Start and End delimit Match within Buffer().
 	Start, End    int
 	Before, Match string
-	Captures      []Capture
-	groups        []int
+	// Output is set by Exchange only: every byte its wait consumed, in
+	// order, across the cases that continued.
+	Output   string
+	Captures []Capture
+	groups   []int
 }
 
 // Buffer returns Before followed by Match.

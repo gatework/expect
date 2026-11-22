@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/gatework/expect"
@@ -46,23 +45,14 @@ func run() error {
 	}); err != nil {
 		return err
 	}
-	var out strings.Builder
-	if _, err := s.SendLine(ctx, "write memory"); err != nil {
-		return err
-	}
-	r, err := s.Expect(ctx, []expect.Case{
-		{Name: "confirm", Pattern: expect.Literal("[confirm]"), Handler: func(ctx context.Context, s *expect.Session, r expect.Result) (expect.Action, error) {
-			out.WriteString(r.Before)
-			_, err := s.SendLine(ctx, "")
-			return expect.ContinueKeepTimer, err
-		}},
+	r, err := s.Exchange(ctx, "write memory", []expect.Case{
+		{Name: "confirm", Pattern: expect.Literal("[confirm]"), Handler: expect.ReplyLineThenContinue("")},
 		prompt,
 	})
 	if err != nil {
 		return err
 	}
-	out.WriteString(r.Before)
-	fmt.Printf("device said: %q\n", out.String())
+	fmt.Printf("device said: %q\n", r.Output)
 	paths := s.Transcript()
 	if err := s.Close(); err != nil {
 		return err

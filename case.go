@@ -13,9 +13,11 @@ const (
 	// Return completes the wait with the handler's Result. It is the zero
 	// value and the action of a case without handler.
 	Return Action = iota
-	// Continue keeps waiting and restarts the relative timer.
+	// Continue keeps waiting and restarts the relative timer, like Tcl's
+	// exp_continue.
 	Continue
-	// ContinueKeepTimer keeps waiting without restarting the timer.
+	// ContinueKeepTimer keeps waiting without restarting the timer, like
+	// exp_continue -continue_timer.
 	ContinueKeepTimer
 )
 
