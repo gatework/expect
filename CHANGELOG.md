@@ -20,6 +20,9 @@ All notable changes are recorded here, following Keep a Changelog.
 - `WithOutput`: `Result.Output` collects everything a wait consumed across
   continued cases (Expect, Poll, Background, Group); the returning case's
   `Before` and `Match` share its memory.
+- `Case.Omit` keeps a match's text (pager, prompt) out of `Result.Output`;
+  `WithOutputLimit(n)` collects like `WithOutput` and fails the wait with
+  `ErrOutputLimit` once more than n bytes were collected.
 - `ThenKeepTimer`, `ReplyLineThenContinue`.
 
 ### Performance

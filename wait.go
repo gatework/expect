@@ -36,6 +36,7 @@ type member struct {
 	rulesAt uint64
 	ruled   bool
 	collect bool   // record consumed bytes in out (WithOutput)
+	limit   int    // WithOutputLimit, or zero
 	out     []byte // bytes consumed by matches, in order
 }
 
@@ -74,7 +75,7 @@ func newEntries(cases []Case, scope RuleScope, s *Session) []*entry {
 }
 
 func newMember(l *lease, cases []Case, o matchOptions) *member {
-	return &member{l: l, s: l.s, cases: newEntries(cases, ScopeCase, l.s), call: newEntries(o.rules, ScopeCall, l.s), collect: o.output}
+	return &member{l: l, s: l.s, cases: newEntries(cases, ScopeCase, l.s), call: newEntries(o.rules, ScopeCall, l.s), collect: o.output, limit: o.outLimit}
 }
 
 func newWaiter(o matchOptions, wake chan struct{}, members ...*member) *waiter {
@@ -205,13 +206,19 @@ func (m *member) fire(ctx context.Context, e *entry, mt scan.Match) outcome {
 		return outcome{m: m, r: m.pending(), err: ErrEmptyMatch, ending: true}
 	}
 	// A returning match without handler takes its text from Output, so
-	// a large output is copied once.
+	// a large output is copied once; an omitted match is not in Output.
 	lazy := m.collect && e.c.Handler == nil && !e.c.NoConsume
-	r := m.result(e, mt, lazy)
+	r := m.result(e, mt, lazy, lazy && !e.c.Omit)
 	if e.c.NoConsume {
 		e.seen, e.seenAt = true, scan.Match{Start: mt.Start, End: mt.End}
-	} else {
-		m.take(mt.End)
+		return m.handle(ctx, e, r)
+	}
+	keep := mt.End
+	if e.c.Omit {
+		keep = mt.Start
+	}
+	if out, ok := m.take(mt.End, keep); !ok {
+		return out
 	}
 	return m.handle(ctx, e, r)
 }
@@ -229,7 +236,9 @@ func (m *member) fireEvent(ctx context.Context, e *entry, n int) outcome {
 	}
 	r.Name, r.Scope = e.c.Name, e.scope
 	r.CaseIndex, r.RuleIndex = e.indices()
-	m.take(n)
+	if out, ok := m.take(n, n); !ok {
+		return out
+	}
 	return m.handle(ctx, e, r)
 }
 
@@ -344,14 +353,19 @@ func (m *member) refreshRules() {
 	m.rulesAt, m.ruled = rs.version, true
 }
 
-// take consumes the first n pending bytes of a match, collecting them
-// when asked, and forgets search progress.
-func (m *member) take(n int) {
+// take consumes the first n pending bytes of a match, collecting the
+// first keep of them when asked, and forgets search progress. It fails
+// the wait when the collected output exceeds its limit.
+func (m *member) take(n, keep int) (outcome, bool) {
 	if m.collect {
-		m.out = append(m.out, m.s.rx[:n]...)
+		m.out = append(m.out, m.s.rx[:keep]...)
 	}
 	m.l.consume(n)
 	m.reset()
+	if m.limit > 0 && len(m.out) > m.limit {
+		return outcome{m: m, r: m.pending(), err: ErrOutputLimit, ending: true}, false
+	}
+	return outcome{}, true
 }
 
 // reset forgets search progress after the buffer was consumed.
@@ -381,25 +395,33 @@ func (m *member) output(r Result) Result {
 		return r
 	}
 	buf := out[len(out)-r.tail:]
-	r.Before, r.Match = buf[:r.split], buf[r.split:]
-	for i, c := range r.Captures {
-		if c.Matched {
-			r.Captures[i].Text = buf[c.Start:c.End]
+	r.Before = buf[:r.split]
+	if r.lazyMatch {
+		r.Match = buf[r.split:]
+		for i, c := range r.Captures {
+			if c.Matched {
+				r.Captures[i].Text = buf[c.Start:c.End]
+			}
 		}
 	}
-	r.tail, r.split = 0, 0
+	r.tail, r.split, r.lazyMatch = 0, 0, false
 	return r
 }
 
 func (m *member) pending() Result { return failed(m.s.id, m.s.rx) }
 
-// result describes a text match. A lazy result leaves its text to output.
-func (m *member) result(e *entry, mt scan.Match, lazy bool) Result {
+// result describes a text match. A lazy result leaves Before, and with
+// lazyMatch also Match and captures, to output.
+func (m *member) result(e *entry, mt scan.Match, lazy, lazyMatch bool) Result {
 	buf := m.s.rx[:mt.End]
 	r := Result{Session: m.s.id, Name: e.c.Name, Scope: e.scope, Start: mt.Start, End: mt.End, groups: slices.Clone(mt.Groups)}
-	if lazy {
-		r.tail, r.split = mt.End, mt.Start
-	} else {
+	switch {
+	case lazyMatch:
+		r.tail, r.split, r.lazyMatch = mt.End, mt.Start, true
+	case lazy:
+		r.tail, r.split = mt.Start, mt.Start
+		r.Match = string(buf[mt.Start:])
+	default:
 		r.Before, r.Match = string(buf[:mt.Start]), string(buf[mt.Start:])
 	}
 	r.CaseIndex, r.RuleIndex = e.indices()
@@ -410,7 +432,7 @@ func (m *member) result(e *entry, mt scan.Match, lazy bool) Result {
 		if g < len(names) {
 			c.Name = names[g]
 		}
-		if c.Matched && !lazy {
+		if c.Matched && !lazyMatch {
 			c.Text = string(buf[a:b])
 		}
 		r.Captures = append(r.Captures, c)

@@ -155,3 +155,64 @@ func TestExpect_NoOutputByDefault(t *testing.T) {
 		t.Fatalf("got %q %q, %v", r.Output, r.Before, err)
 	}
 }
+
+// TestCase_Omit checks that omitted matches (a pager, the prompt) stay out
+// of Output while the text around them is kept.
+func TestCase_Omit(t *testing.T) {
+	t.Parallel()
+	s, p := pipe(t)
+	p.say("page1\n --More-- ")
+	go func() {
+		p.hear(" ")
+		p.say("page2\nAre you sure? [Y/N]")
+		p.hear("Y\n")
+		p.say("done\nr1#")
+	}()
+	r, err := s.Expect(t.Context(), []expect.Case{
+		{Name: "more", Pattern: expect.Literal(" --More-- "), Omit: true, Handler: expect.ReplyThenContinue(" ")},
+		{Name: "confirm", Pattern: expect.Literal("[Y/N]"), Handler: expect.ReplyLineThenContinue("Y")},
+		{Name: "prompt", Pattern: expect.MustCompile(`(?P<host>r\d)#`), Omit: true},
+	}, expect.WithOutput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, _ := r.Capture("host")
+	if r.Output != "page1\npage2\nAre you sure? [Y/N]done\n" || r.Before != "done\n" || r.Match != "r1#" || host.Text != "r1" {
+		t.Fatalf("output %q before %q match %q host %q", r.Output, r.Before, r.Match, host.Text)
+	}
+}
+
+func TestCase_OmitRejected(t *testing.T) {
+	t.Parallel()
+	s, _ := pipe(t)
+	for _, c := range []expect.Case{
+		{Pattern: expect.EOF(), Omit: true},
+		{Pattern: expect.Literal("x"), Omit: true, NoConsume: true},
+	} {
+		if _, err := s.Poll(t.Context(), []expect.Case{c}); !errors.As(err, new(*expect.ConfigError)) {
+			t.Errorf("%v accepted: %v", c, err)
+		}
+	}
+}
+
+// TestWithOutputLimit checks that collecting more than the limit fails the
+// wait and keeps what was collected.
+func TestWithOutputLimit(t *testing.T) {
+	t.Parallel()
+	s, p := pipe(t)
+	p.say("0123456789 --More-- ")
+	go func() {
+		p.hear(" ")
+		p.say("abcdefghij\nr1#")
+	}()
+	r, err := s.Expect(t.Context(), []expect.Case{
+		{Name: "more", Pattern: expect.Literal(" --More-- "), Omit: true, Handler: expect.ReplyThenContinue(" ")},
+		lit("prompt", "#"),
+	}, expect.WithOutputLimit(15))
+	if !errors.Is(err, expect.ErrOutputLimit) || r.Output != "0123456789abcdefghij\nr1#" || r.CaseIndex != -1 {
+		t.Fatalf("got %v output %q case %d", err, r.Output, r.CaseIndex)
+	}
+	if _, err := s.Expect(t.Context(), nil, expect.WithOutputLimit(-1)); !errors.As(err, new(*expect.ConfigError)) {
+		t.Fatalf("negative limit: %v", err)
+	}
+}

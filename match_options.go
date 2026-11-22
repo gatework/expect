@@ -35,6 +35,7 @@ type matchOptions struct {
 	stream     Handler
 	window     int
 	output     bool
+	outLimit   int
 }
 
 // WithTimeout sets the relative timer of the wait, which includes handler
@@ -119,6 +120,20 @@ func WithSearchWindow(n int) MatchOption {
 func WithOutput() MatchOption {
 	return func(o *matchOptions) error {
 		o.output = true
+		return nil
+	}
+}
+
+// WithOutputLimit is WithOutput that fails the wait with ErrOutputLimit
+// once more than n bytes were collected, as soon as the match that
+// crosses it is consumed and before its handler runs. Zero means no
+// limit.
+func WithOutputLimit(n int) MatchOption {
+	return func(o *matchOptions) error {
+		if n < 0 {
+			return configError("output limit", "negative")
+		}
+		o.output, o.outLimit = true, n
 		return nil
 	}
 }
