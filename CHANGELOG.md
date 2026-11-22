@@ -4,6 +4,8 @@ All notable changes are recorded here, following Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-21
+
 ### Changed
 
 - Recordings now default to `~/.local/share/gatework/expect`, the shared
@@ -21,6 +23,13 @@ All notable changes are recorded here, following Keep a Changelog.
   continued cases (Expect, Poll, Background, Group); the returning case's
   `Before` and `Match` share its memory.
 - `ThenKeepTimer`, `ReplyLineThenContinue`.
+
+### Fixed
+
+- `NoConsume` cases now observe each candidate once as input grows.
+- Relay retains partial matches for rules as well as route cases.
+- Interact and Relay apply secrets registered during an active session to
+  subsequent output.
 
 ### Performance
 
