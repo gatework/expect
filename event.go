@@ -71,8 +71,8 @@ type Observer func(Event)
 // observers.
 func (s *Session) emit(ctx context.Context, ev Event) {
 	ev.Session = s.id
-	if ctx = context.WithoutCancel(ctx); s.log.Enabled(ctx, slog.LevelDebug) {
-		s.logEvent(ctx, ev)
+	if s.log.Enabled(ctx, slog.LevelDebug) {
+		s.logEvent(context.WithoutCancel(ctx), ev)
 	}
 	for _, o := range s.o.observers {
 		o(ev)
