@@ -30,7 +30,7 @@ func (s *Session) Expect(ctx context.Context, cases []Case, opts ...MatchOption)
 	defer l.release()
 	ctx, cancel := s.scoped(ctx)
 	defer cancel()
-	return s.wait(ctx, l, cases, o, false)
+	return s.wait(ctx, l, cases, o)
 }
 
 // Exchange sends line followed by the line ending, then waits like
@@ -39,10 +39,9 @@ func (s *Session) Expect(ctx context.Context, cases []Case, opts ...MatchOption)
 // send. Input that arrived before the call stays pending and is matched
 // first, as with Expect.
 //
-// Result.Output holds every byte the wait consumed, in order: the text of
-// cases and rules that continued (answered confirmations, pagers) and of
-// the returning case. On failure the unconsumed input is in Before.
-// Bytes handed to WithStreamingFallback are not collected.
+// It always collects Result.Output (see WithOutput): the answered
+// confirmations, pagers and the returning case, in order. On failure the
+// unconsumed input is in Before.
 func (s *Session) Exchange(ctx context.Context, line string, cases []Case, opts ...MatchOption) (Result, error) {
 	o, err := s.prepare(cases, opts)
 	if err != nil {
@@ -58,19 +57,15 @@ func (s *Session) Exchange(ctx context.Context, line string, cases []Case, opts 
 	if _, err := s.SendLine(ctx, line); err != nil {
 		return failed(s.id, s.rx), err
 	}
-	return s.wait(ctx, l, cases, o, true)
+	o.output = true
+	return s.wait(ctx, l, cases, o)
 }
 
 // wait runs one foreground wait on a held lease.
-func (s *Session) wait(ctx context.Context, l *lease, cases []Case, o matchOptions, collect bool) (Result, error) {
+func (s *Session) wait(ctx context.Context, l *lease, cases []Case, o matchOptions) (Result, error) {
 	start := time.Now()
-	m := newMember(l, cases, o)
-	m.collect = collect
-	w := newWaiter(o, l.wake, m)
-	_, r, err := w.run(ctx)
-	if collect {
-		r.Output = string(m.out)
-	}
+	w := newWaiter(o, l.wake, newMember(l, cases, o))
+	_, r, err := w.wait(ctx)
 	s.emit(ctx, Event{Op: OpExpect, Case: r.Name, Scope: r.Scope, CaseIndex: r.CaseIndex, Duration: time.Since(start), Err: classify(err)})
 	return r, err
 }
@@ -92,18 +87,19 @@ func (s *Session) Poll(ctx context.Context, cases []Case, opts ...MatchOption) (
 	ctx, cancel := s.scoped(ctx)
 	defer cancel()
 	o.timeout, o.idle = 0, 0
-	w := newWaiter(o, l.wake, newMember(l, cases, o))
+	m := newMember(l, cases, o)
+	w := newWaiter(o, l.wake, m)
 	defer w.timer.stop()
 	for {
 		out := w.step(ctx)
 		switch {
 		case out.fired || out.ending:
 			if out.err != nil || out.act == Return {
-				return out.r, out.err
+				return m.finish(out.r), out.err
 			}
 		default:
 			out = w.timeout(ctx)
-			return out.r, out.err
+			return m.finish(out.r), out.err
 		}
 	}
 }

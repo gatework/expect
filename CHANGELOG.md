@@ -16,8 +16,10 @@ All notable changes are recorded here, following Keep a Changelog.
 ### Added
 
 - `Session.Exchange`: send a line and wait, taking the input first so a
-  busy session sends nothing; `Result.Output` collects everything the wait
-  consumed across continued cases.
+  busy session sends nothing; it always collects `Result.Output`.
+- `WithOutput`: `Result.Output` collects everything a wait consumed across
+  continued cases (Expect, Poll, Background, Group); the returning case's
+  `Before` and `Match` share its memory.
 - `ThenKeepTimer`, `ReplyLineThenContinue`.
 
 ### Performance

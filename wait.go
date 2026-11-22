@@ -35,7 +35,7 @@ type member struct {
 	after   []*entry
 	rulesAt uint64
 	ruled   bool
-	collect bool   // record consumed bytes in out (Exchange)
+	collect bool   // record consumed bytes in out (WithOutput)
 	out     []byte // bytes consumed by matches, in order
 }
 
@@ -74,11 +74,20 @@ func newEntries(cases []Case, scope RuleScope, s *Session) []*entry {
 }
 
 func newMember(l *lease, cases []Case, o matchOptions) *member {
-	return &member{l: l, s: l.s, cases: newEntries(cases, ScopeCase, l.s), call: newEntries(o.rules, ScopeCall, l.s)}
+	return &member{l: l, s: l.s, cases: newEntries(cases, ScopeCase, l.s), call: newEntries(o.rules, ScopeCall, l.s), collect: o.output}
 }
 
 func newWaiter(o matchOptions, wake chan struct{}, members ...*member) *waiter {
 	return &waiter{members: members, o: o, wake: wake, timer: newBudget(o.timeout), idle: newBudget(o.idle)}
+}
+
+// wait runs the wait and completes the Output of the returning member.
+func (w *waiter) wait(ctx context.Context) (*member, Result, error) {
+	m, r, err := w.run(ctx)
+	if m != nil {
+		r = m.finish(r)
+	}
+	return m, r, err
 }
 
 // run waits until a case returns, an error occurs or ctx ends.
@@ -195,7 +204,10 @@ func (m *member) fire(ctx context.Context, e *entry, mt scan.Match) outcome {
 	if mt.End == mt.Start {
 		return outcome{m: m, r: m.pending(), err: ErrEmptyMatch, ending: true}
 	}
-	r := m.result(e, mt)
+	// A returning match without handler takes its text from Output, so
+	// a large output is copied once.
+	lazy := m.collect && e.c.Handler == nil && !e.c.NoConsume
+	r := m.result(e, mt, lazy)
 	if e.c.NoConsume {
 		e.seen, e.seenAt = true, scan.Match{Start: mt.Start, End: mt.End}
 	} else {
@@ -209,8 +221,12 @@ func (m *member) fireEvent(ctx context.Context, e *entry, n int) outcome {
 	if out, ok := m.admit(e); !ok {
 		return out
 	}
-	r := m.pending()
-	r.Before = string(m.s.rx[:n])
+	r := failed(m.s.id, nil)
+	if m.collect && e.c.Handler == nil {
+		r.tail, r.split = n, n
+	} else {
+		r.Before = string(m.s.rx[:n])
+	}
 	r.Name, r.Scope = e.c.Name, e.scope
 	r.CaseIndex, r.RuleIndex = e.indices()
 	m.take(n)
@@ -233,7 +249,7 @@ func (w *waiter) streamOut(ctx context.Context, m *member) outcome {
 }
 
 func (m *member) handle(ctx context.Context, e *entry, r Result) outcome {
-	m.s.emit(ctx, Event{Op: OpMatch, Case: e.c.Name, Scope: e.scope, CaseIndex: r.CaseIndex, Bytes: len(r.Before) + len(r.Match)})
+	m.s.emit(ctx, Event{Op: OpMatch, Case: e.c.Name, Scope: e.scope, CaseIndex: r.CaseIndex, Bytes: max(r.tail, len(r.Before)+len(r.Match))})
 	if e.c.Handler == nil {
 		return outcome{m: m, r: r, act: Return, fired: true}
 	}
@@ -348,13 +364,43 @@ func (m *member) reset() {
 	}
 }
 
+// finish completes the Output of a result this member returns.
+func (m *member) finish(r Result) Result {
+	if m.collect {
+		return m.output(r)
+	}
+	return r
+}
+
+// output sets r.Output from the collected bytes and fills a lazy result
+// with substrings of it.
+func (m *member) output(r Result) Result {
+	out := string(m.out)
+	r.Output = out
+	if r.tail == 0 {
+		return r
+	}
+	buf := out[len(out)-r.tail:]
+	r.Before, r.Match = buf[:r.split], buf[r.split:]
+	for i, c := range r.Captures {
+		if c.Matched {
+			r.Captures[i].Text = buf[c.Start:c.End]
+		}
+	}
+	r.tail, r.split = 0, 0
+	return r
+}
+
 func (m *member) pending() Result { return failed(m.s.id, m.s.rx) }
 
-func (m *member) result(e *entry, mt scan.Match) Result {
+// result describes a text match. A lazy result leaves its text to output.
+func (m *member) result(e *entry, mt scan.Match, lazy bool) Result {
 	buf := m.s.rx[:mt.End]
-	r := Result{
-		Session: m.s.id, Name: e.c.Name, Scope: e.scope, Start: mt.Start, End: mt.End,
-		Before: string(buf[:mt.Start]), Match: string(buf[mt.Start:]), groups: slices.Clone(mt.Groups),
+	r := Result{Session: m.s.id, Name: e.c.Name, Scope: e.scope, Start: mt.Start, End: mt.End, groups: slices.Clone(mt.Groups)}
+	if lazy {
+		r.tail, r.split = mt.End, mt.Start
+	} else {
+		r.Before, r.Match = string(buf[:mt.Start]), string(buf[mt.Start:])
 	}
 	r.CaseIndex, r.RuleIndex = e.indices()
 	names := e.c.Pattern.m.Names()
@@ -364,7 +410,7 @@ func (m *member) result(e *entry, mt scan.Match) Result {
 		if g < len(names) {
 			c.Name = names[g]
 		}
-		if c.Matched {
+		if c.Matched && !lazy {
 			c.Text = string(buf[a:b])
 		}
 		r.Captures = append(r.Captures, c)

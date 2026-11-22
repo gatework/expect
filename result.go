@@ -66,11 +66,14 @@ type Result struct {
 	// Start and End delimit Match within Buffer().
 	Start, End    int
 	Before, Match string
-	// Output is set by Exchange only: every byte its wait consumed, in
-	// order, across the cases that continued.
+	// Output is set with WithOutput (always by Exchange): every byte the
+	// wait consumed, in order, across the cases that continued.
 	Output   string
 	Captures []Capture
 	groups   []int
+	// tail and split describe a result whose text is still to be taken
+	// from the end of Output: its last tail bytes, Match from split.
+	tail, split int
 }
 
 // Buffer returns Before followed by Match.

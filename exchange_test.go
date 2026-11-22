@@ -108,3 +108,50 @@ func TestThen_RestartsTimer(t *testing.T) {
 		})
 	}
 }
+
+// TestWithOutput checks Output collection on Expect, with captures and
+// Before/Match of the returning case taken from Output.
+func TestWithOutput(t *testing.T) {
+	t.Parallel()
+	s, p := pipe(t)
+	p.say("page1 --More--")
+	go func() {
+		p.hear(" ")
+		p.say("page2\nhost r1#")
+	}()
+	r, err := s.Expect(t.Context(), []expect.Case{
+		{Name: "more", Pattern: expect.Literal("--More--"), Handler: expect.ReplyThenContinue(" ")},
+		{Name: "prompt", Pattern: expect.MustCompile(`host (?P<host>\w+)#`)},
+	}, expect.WithOutput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, _ := r.Capture("host")
+	if r.Output != "page1 --More--page2\nhost r1#" || r.Before != "page2\n" || r.Match != "host r1#" || host.Text != "r1" || r.Buffer() != "page2\nhost r1#" {
+		t.Fatalf("output %q before %q match %q host %q", r.Output, r.Before, r.Match, host.Text)
+	}
+}
+
+// TestWithOutput_Event checks an EOF case returning collected text.
+func TestWithOutput_Event(t *testing.T) {
+	t.Parallel()
+	s, p := pipe(t)
+	go func() {
+		_, _ = io.WriteString(p.conn, "bye\n")
+		_ = p.conn.Close()
+	}()
+	r, err := s.Expect(t.Context(), []expect.Case{{Name: "eof", Pattern: expect.EOF()}}, expect.WithOutput())
+	if err != nil || r.Name != "eof" || r.Before != "bye\n" || r.Output != "bye\n" {
+		t.Fatalf("got %+v %q %q, %v", r, r.Before, r.Output, err)
+	}
+}
+
+func TestExpect_NoOutputByDefault(t *testing.T) {
+	t.Parallel()
+	s, p := pipe(t)
+	p.say("router#")
+	r, err := s.Expect(t.Context(), []expect.Case{lit("prompt", "#")})
+	if err != nil || r.Output != "" || r.Before != "router" {
+		t.Fatalf("got %q %q, %v", r.Output, r.Before, err)
+	}
+}

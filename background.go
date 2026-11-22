@@ -140,7 +140,7 @@ func (b *Background) run(ctx context.Context, w *waiter) {
 		b.cancel()
 		close(b.done)
 	}()
-	_, b.r, b.err = w.run(ctx)
+	_, b.r, b.err = w.wait(ctx)
 	normal = true
 }
 
