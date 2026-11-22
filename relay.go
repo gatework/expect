@@ -141,7 +141,7 @@ func (r *relayRoute) step(ctx context.Context, w *waiter, flush bool) (bool, err
 		if err := r.forward(ctx, s.rx[:end]); err != nil {
 			return true, err
 		}
-		out := w.fire(ctx, r.m, e, mt)
+		out := r.m.fire(ctx, e, mt)
 		if out.err != nil || out.act == Return {
 			return true, cmpOr(out.err, errRelayDone)
 		}

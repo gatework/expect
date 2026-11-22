@@ -12,14 +12,16 @@ import (
 
 // entry is one case of a wait with its per-wait state.
 type entry struct {
-	c      Case
-	scope  RuleScope
-	index  int
-	st     scan.State
-	hits   int
-	limit  int
-	seen   bool   // a NoConsume match was observed ...
-	seenAt uint64 // ... at this buffer version
+	c     Case
+	scope RuleScope
+	index int
+	st    scan.State
+	hits  int
+	limit int
+	// seen is the NoConsume candidate already observed. Input only grows
+	// until it is consumed, so the same offsets mean the same candidate.
+	seen   bool
+	seenAt scan.Match
 }
 
 // member is one session taking part in a wait: a single Expect has one,
@@ -138,7 +140,7 @@ func (w *waiter) step(ctx context.Context) outcome {
 
 func (w *waiter) stepMember(ctx context.Context, m *member) outcome {
 	if e, mt, ok := m.scanText(w.o); ok {
-		return w.fire(ctx, m, e, mt)
+		return m.fire(ctx, e, mt)
 	}
 	s := m.s
 	if w.o.stream != nil && len(s.rx) >= min(streamWindow, s.o.bufferLimit) {
@@ -146,7 +148,7 @@ func (w *waiter) stepMember(ctx context.Context, m *member) outcome {
 	}
 	if len(s.rx) > s.o.bufferLimit {
 		if e := m.event(patternFullBuffer); e != nil {
-			return w.fireEvent(ctx, m, e, len(s.rx))
+			return m.fireEvent(ctx, e, len(s.rx))
 		}
 		return outcome{m: m, r: m.pending(), err: ErrBufferLimit, ending: true}
 	}
@@ -162,7 +164,7 @@ func (w *waiter) end(ctx context.Context, m *member) outcome {
 	err := m.s.rxErr
 	if cleanEOF(err) {
 		if e := m.event(patternEOF, patternDefault); e != nil {
-			return w.fireEvent(ctx, m, e, len(m.s.rx))
+			return m.fireEvent(ctx, e, len(m.s.rx))
 		}
 	}
 	return outcome{m: m, r: m.pending(), err: m.s.closedErr(err), ending: true}
@@ -173,7 +175,7 @@ func (w *waiter) timeout(ctx context.Context) outcome {
 	for _, m := range w.members {
 		if e := m.event(patternTimeout, patternDefault); e != nil {
 			w.timer.reset()
-			out := w.fireEvent(ctx, m, e, 0)
+			out := m.fireEvent(ctx, e, 0)
 			if out.err == nil && out.act == Continue {
 				w.timer.reset()
 			}
@@ -184,8 +186,9 @@ func (w *waiter) timeout(ctx context.Context) outcome {
 	return outcome{m: m, r: m.pending(), err: ErrTimeout, ending: true}
 }
 
-// fire consumes a text match and runs its handler.
-func (w *waiter) fire(ctx context.Context, m *member, e *entry, mt scan.Match) outcome {
+// fire consumes a text match and runs its handler. It needs no waiter:
+// Interact and Relay fire matches of their own loops.
+func (m *member) fire(ctx context.Context, e *entry, mt scan.Match) outcome {
 	if out, ok := m.admit(e); !ok {
 		return out
 	}
@@ -194,15 +197,15 @@ func (w *waiter) fire(ctx context.Context, m *member, e *entry, mt scan.Match) o
 	}
 	r := m.result(e, mt)
 	if e.c.NoConsume {
-		e.seen, e.seenAt = true, m.s.version
+		e.seen, e.seenAt = true, scan.Match{Start: mt.Start, End: mt.End}
 	} else {
 		m.take(mt.End)
 	}
-	return w.handle(ctx, m, e, r)
+	return m.handle(ctx, e, r)
 }
 
 // fireEvent runs an event case, consuming n pending bytes into Before.
-func (w *waiter) fireEvent(ctx context.Context, m *member, e *entry, n int) outcome {
+func (m *member) fireEvent(ctx context.Context, e *entry, n int) outcome {
 	if out, ok := m.admit(e); !ok {
 		return out
 	}
@@ -211,7 +214,7 @@ func (w *waiter) fireEvent(ctx context.Context, m *member, e *entry, n int) outc
 	r.Name, r.Scope = e.c.Name, e.scope
 	r.CaseIndex, r.RuleIndex = e.indices()
 	m.take(n)
-	return w.handle(ctx, m, e, r)
+	return m.handle(ctx, e, r)
 }
 
 // streamOut hands the older half of the pending window to the streaming
@@ -229,7 +232,7 @@ func (w *waiter) streamOut(ctx context.Context, m *member) outcome {
 	return outcome{m: m, r: r, act: act, err: err, fired: true}
 }
 
-func (w *waiter) handle(ctx context.Context, m *member, e *entry, r Result) outcome {
+func (m *member) handle(ctx context.Context, e *entry, r Result) outcome {
 	m.s.emit(ctx, Event{Op: OpMatch, Case: e.c.Name, Scope: e.scope, CaseIndex: r.CaseIndex, Bytes: len(r.Before) + len(r.Match)})
 	if e.c.Handler == nil {
 		return outcome{m: m, r: r, act: Return, fired: true}
@@ -268,11 +271,11 @@ func (m *member) scanText(o matchOptions) (*entry, scan.Match, bool) {
 		var best *entry
 		var bm scan.Match
 		for _, e := range g {
-			if !e.c.Pattern.isText() || e.c.NoConsume && e.seen && e.seenAt == m.s.version {
+			if !e.c.Pattern.isText() {
 				continue
 			}
 			mt, ok := e.c.Pattern.m.Find(m.s.rx, &e.st, lim)
-			if !ok {
+			if !ok || e.seen && mt.Start == e.seenAt.Start && mt.End == e.seenAt.End {
 				continue
 			}
 			if best == nil || mt.Start < bm.Start {

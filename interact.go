@@ -129,8 +129,7 @@ func (it *interaction) remoteStep(ctx context.Context) (bool, error) {
 		if !ok {
 			break
 		}
-		w := &waiter{o: matchOptions{}}
-		out := w.fire(ctx, it.remote, e, mt)
+		out := it.remote.fire(ctx, e, mt)
 		it.forwarded = max(0, it.forwarded-mt.End)
 		if out.err != nil || out.act == Return {
 			return true, out.err
@@ -315,7 +314,7 @@ func (it *interaction) outputTimeout(ctx context.Context) (bool, error) {
 		return true, ErrTimeout
 	}
 	it.timer.reset()
-	out := (&waiter{}).fireEvent(ctx, it.remote, e, 0)
+	out := it.remote.fireEvent(ctx, e, 0)
 	if out.err != nil || out.act == Return {
 		return true, out.err
 	}

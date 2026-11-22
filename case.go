@@ -43,7 +43,8 @@ type Case struct {
 	// cases.
 	Limit int
 	// NoConsume previews a text match without consuming it. A Continue
-	// then observes the same unchanged candidate only once.
+	// then observes each candidate once, even as more input arrives;
+	// another case consuming input makes the next candidate new.
 	NoConsume bool
 	// Sessions restricts a Group case to these members; empty means all.
 	Sessions []*Session
