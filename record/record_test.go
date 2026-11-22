@@ -63,7 +63,7 @@ func TestNew_DefaultDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(home, ".local", "expect"); r.Dir() != want {
+	if want := filepath.Join(home, ".local", "share", "gatework", "expect"); r.Dir() != want {
 		t.Fatalf("Dir = %q, want %q", r.Dir(), want)
 	}
 }

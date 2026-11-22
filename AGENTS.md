@@ -18,7 +18,7 @@ expect 是网络设备自动交互的流引擎：会话、匹配、应答、录�
 - 写入一旦进入传输即不重放；之后的任何失败关闭会话并返回带 `Written` 的 `*WriteError`。
 - 溢出不丢数据：超出缓冲上限返回 `ErrBufferLimit` 并保留输入，除非显式 `FullBuffer` 或 `WithStreamingFallback`。
 - `Result` 保留原始字节；录像、交互输出与 Relay 输出一律经脱敏过滤器。错误与事件只含元数据，不含设备输出或凭据（ERR-5）。
-- **会话录像默认开启**（`~/.local/expect`），这是对 LOG-1“库默认不输出”的有意例外：运维回溯要求每次设备交互都有记录。关闭方式：`WithoutRecording()` 或 `EXPECT_RECORD=off`。测试与示例必须显式关闭或指向 `t.TempDir()`，不得写入开发者家目录。
+- **会话录像默认开启**（`~/.local/share/gatework/expect`），这是对 LOG-1“库默认不输出”的有意例外：运维回溯要求每次设备交互都有记录。关闭方式：`WithoutRecording()` 或 `EXPECT_RECORD=off`。测试与示例必须显式关闭或指向 `t.TempDir()`，不得写入开发者家目录。
 - 录像失败默认只告警并丢弃该文件；`Required` 时会话失败。
 
 ## 构建与检查

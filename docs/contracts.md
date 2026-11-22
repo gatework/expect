@@ -30,7 +30,7 @@
 
 - 任意分块不泄露密钥，输出与分块无关（`FuzzFilterChunks`）；行级规则只遮蔽子匹配（`TestFilter_Rule`）。
 - 录像中的密码与配置密文已遮蔽，jsonl 记录用例名与关闭事件（`TestSession_TranscriptRedacted`）。
-- 默认开启并写入 `~/.local/expect`，`EXPECT_RECORD=off` 关闭（`TestNewSession_RecordsByDefault`）；配置解析、清理、权限、`Required`（`record` 包测试）。
+- 默认开启并写入 `~/.local/share/gatework/expect`，`EXPECT_RECORD=off` 关闭（`TestNewSession_RecordsByDefault`）；配置解析、清理、权限、`Required`（`record` 包测试）。
 
 ## 接收方
 

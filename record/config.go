@@ -26,7 +26,8 @@ const (
 
 // DefaultDir is the transcript root, relative to the home directory, used
 // when Config.Dir is empty.
-const DefaultDir = ".local/expect"
+// It is the expect directory in the shared gatework data home.
+const DefaultDir = ".local/share/gatework/expect"
 
 // ErrConfig reports an invalid configuration value.
 var ErrConfig = errors.New("record: invalid configuration")
@@ -38,7 +39,7 @@ type Config struct {
 	// Enabled turns recording on. EXPECT_RECORD (on/off, true/false, 1/0).
 	Enabled bool `env:"EXPECT_RECORD" envDefault:"on"`
 	// Dir is the transcript root; "~/" expands to the home directory.
-	// Empty means ~/.local/expect. EXPECT_RECORD_DIR.
+	// Empty means ~/.local/share/gatework/expect. EXPECT_RECORD_DIR.
 	Dir string `env:"EXPECT_RECORD_DIR"`
 	// Formats lists the files kept per session; empty means log and cast.
 	// EXPECT_RECORD_FORMATS (comma separated).
@@ -61,7 +62,8 @@ type Config struct {
 }
 
 // DefaultConfig returns the configuration used when nothing is set:
-// recording on, log and cast files under ~/.local/expect, 100 MB, 30 days.
+// recording on, log and cast files under ~/.local/share/gatework/expect,
+// 100 MB, 30 days.
 func DefaultConfig() Config {
 	return Config{Enabled: true, Formats: []Format{FormatLog, FormatCast}, MaxSizeMB: 100, MaxAge: 720 * time.Hour}
 }
@@ -156,7 +158,7 @@ func (c Config) root() (string, error) {
 		return "", fmt.Errorf("record: home directory: %w", err)
 	}
 	if dir == "" {
-		return filepath.Join(home, DefaultDir), nil
+		return filepath.Join(home, filepath.FromSlash(DefaultDir)), nil
 	}
 	return filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(dir, "~"), "/")), nil
 }

@@ -4,6 +4,12 @@ All notable changes are recorded here, following Keep a Changelog.
 
 ## [Unreleased]
 
+### Changed
+
+- Recordings now default to `~/.local/share/gatework/expect`, the shared
+  gatework data home (was `~/.local/expect`). `EXPECT_RECORD_DIR` still
+  overrides it; move old recordings by hand if they are still needed.
+
 ## [0.1.0] - 2026-11-20
 
 ### Added

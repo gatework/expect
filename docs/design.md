@@ -48,7 +48,7 @@
 | 变量 | 默认 |
 |---|---|
 | `EXPECT_RECORD` | `on` |
-| `EXPECT_RECORD_DIR` | `~/.local/expect` |
+| `EXPECT_RECORD_DIR` | `~/.local/share/gatework/expect` |
 | `EXPECT_RECORD_FORMATS` | `log,cast` |
 | `EXPECT_RECORD_MAX_SIZE` | `100`（MB） |
 | `EXPECT_RECORD_MAX_AGE` | `720h` |

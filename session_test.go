@@ -447,7 +447,7 @@ func TestNewSession_RecordsByDefault(t *testing.T) {
 	}
 	paths := s.Transcript()
 	_ = s.Close()
-	if len(paths) != 2 || !strings.HasPrefix(paths[0], filepath.Join(home, ".local", "expect")) {
+	if len(paths) != 2 || !strings.HasPrefix(paths[0], filepath.Join(home, ".local", "share", "gatework", "expect")) {
 		t.Fatalf("default transcript %v", paths)
 	}
 	t.Setenv("EXPECT_RECORD", "off")

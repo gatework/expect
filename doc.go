@@ -9,7 +9,7 @@
 // that may reply and Continue. Reusable rules (WithBefore, WithAfter,
 // WithRules) answer pagers and banners on every wait.
 //
-// Every session is recorded by default under ~/.local/expect, configured
+// Every session is recorded by default under ~/.local/share/gatework/expect, configured
 // with WithRecorder or the EXPECT_RECORD_* environment variables (see
 // package record). Secrets registered with Redact and RedactPattern are
 // masked in transcripts and interactive output; Results always carry the
