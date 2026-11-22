@@ -67,6 +67,12 @@ func (f *Filter) Clone() *Filter {
 	return &Filter{secrets: slices.Clone(f.secrets), rules: slices.Clone(f.rules), mask: f.mask}
 }
 
+// Sync adopts the secrets and rules of src for the rest of the stream,
+// keeping the bytes f holds, which the new secrets then also cover.
+func (f *Filter) Sync(src *Filter) {
+	f.secrets, f.rules, f.mask = slices.Clone(src.secrets), slices.Clone(src.rules), src.mask
+}
+
 // Active reports whether the filter can change any byte.
 func (f *Filter) Active() bool { return len(f.secrets) > 0 || len(f.rules) > 0 }
 

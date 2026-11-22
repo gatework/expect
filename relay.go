@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
-
-	"github.com/gatework/expect/internal/redact"
 )
 
 // relayFlush is how long a route holds a possible partial match while its
@@ -71,7 +69,7 @@ type relayRoute struct {
 	l      *lease
 	m      *member
 	o      matchOptions
-	filter *redact.Filter
+	filter *outputFilter
 }
 
 func newRelayRoute(i int, rt Route, earlier []Route, opts []MatchOption) (*relayRoute, error) {
@@ -90,9 +88,7 @@ func newRelayRoute(i int, rt Route, earlier []Route, opts []MatchOption) (*relay
 		return nil, err
 	}
 	s := rt.Source
-	s.diagMu.Lock()
-	filter := s.rxFilter.Clone()
-	s.diagMu.Unlock()
+	filter := s.newOutputFilter()
 	return &relayRoute{index: i, rt: rt, l: l, m: newMember(l, rt.Cases, o), o: o, filter: filter}, nil
 }
 

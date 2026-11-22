@@ -89,3 +89,21 @@ func FuzzFilterChunks(f *testing.F) {
 		}
 	})
 }
+
+func TestFilter_SyncKeepsHeld(t *testing.T) {
+	t.Parallel()
+	f := New("")
+	if err := f.AddSecrets("abc"); err != nil {
+		t.Fatal(err)
+	}
+	got := string(f.Append([]byte("key ab")))
+	src := f.Clone()
+	if err := src.AddSecrets("abd"); err != nil {
+		t.Fatal(err)
+	}
+	f.Sync(src)
+	got += string(f.Append([]byte("d\n"))) + string(f.Finish())
+	if got != "key ******\n" {
+		t.Fatalf("got %q", got)
+	}
+}

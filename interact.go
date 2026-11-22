@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gatework/expect/internal/redact"
 	"github.com/gatework/expect/internal/scan"
 )
 
@@ -54,9 +53,7 @@ func (s *Session) interact(ctx context.Context, input io.ReadCloser, output io.W
 	defer cancel()
 	in := startReader(input)
 	defer in.stop()
-	s.diagMu.Lock()
-	filter := s.rxFilter.Clone()
-	s.diagMu.Unlock()
+	filter := s.newOutputFilter()
 	it := &interaction{
 		s: s, l: l, o: o, out: output, filter: filter, in: in,
 		remote: newMember(l, o.output, mo), local: newEntries(o.input, ScopeCase, s),
@@ -76,7 +73,7 @@ type interaction struct {
 	l         *lease
 	o         interactOptions
 	out       io.Writer
-	filter    *redact.Filter
+	filter    *outputFilter
 	in        *reader
 	remote    *member  // output cases over the peer stream
 	local     []*entry // input cases

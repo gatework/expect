@@ -222,6 +222,54 @@ func TestSession_Interact(t *testing.T) {
 	}
 }
 
+// TestSession_InteractRedactLater checks that a secret registered while
+// an operator is attached is masked in what the operator sees next.
+func TestSession_InteractRedactLater(t *testing.T) {
+	t.Parallel()
+	s, p := pipe(t)
+	opIn, _ := io.Pipe()
+	var out syncBuffer
+	errc := make(chan error, 1)
+	go func() { errc <- s.Interact(t.Context(), opIn, &out) }()
+	p.say("router#")
+	waitFor(t, func() bool { return strings.Contains(out.String(), "router#") })
+	if err := s.Redact("s3cret"); err != nil {
+		t.Fatal(err)
+	}
+	p.say("key s3cret\nrouter#")
+	waitFor(t, func() bool { return strings.Count(out.String(), "router#") == 2 })
+	_ = p.conn.Close()
+	if err := <-errc; err != nil {
+		t.Fatalf("Interact: %v", err)
+	}
+	if got := out.String(); strings.Contains(got, "s3cret") || !strings.Contains(got, "key ******") {
+		t.Fatalf("operator saw %q", got)
+	}
+}
+
+// TestRelay_RedactLater checks the same for a running Relay's output.
+func TestRelay_RedactLater(t *testing.T) {
+	t.Parallel()
+	src, ps := pipe(t)
+	var tee syncBuffer
+	errc := make(chan error, 1)
+	go func() {
+		errc <- expect.Relay(t.Context(), []expect.Route{{Source: src, Output: &tee, Cases: []expect.Case{lit("end", "END")}}})
+	}()
+	ps.say("one\n")
+	waitFor(t, func() bool { return tee.String() == "one\n" })
+	if err := src.Redact("s3cret"); err != nil {
+		t.Fatal(err)
+	}
+	ps.say("key s3cret\nEND")
+	if err := <-errc; err != nil {
+		t.Fatal(err)
+	}
+	if got := tee.String(); got != "one\nkey ******\n" {
+		t.Fatalf("tee %q", got)
+	}
+}
+
 func TestSession_InteractOutputCase(t *testing.T) {
 	t.Parallel()
 	s, p := pipe(t)
