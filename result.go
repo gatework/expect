@@ -72,8 +72,10 @@ type Result struct {
 	Captures []Capture
 	groups   []int
 	// tail and split describe a result whose text is still to be taken
-	// from the end of Output: its last tail bytes, Match from split.
+	// from the end of Output: its last tail bytes, Before up to split,
+	// and with lazyMatch Match from split.
 	tail, split int
+	lazyMatch   bool
 }
 
 // Buffer returns Before followed by Match.

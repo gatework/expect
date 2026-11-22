@@ -121,7 +121,7 @@ func classify(err error) ErrorClass {
 		return ClassClosed
 	case errors.Is(err, io.EOF):
 		return ClassEOF
-	case errors.Is(err, ErrBufferLimit):
+	case errors.Is(err, ErrBufferLimit), errors.Is(err, ErrOutputLimit):
 		return ClassBufferLimit
 	case errors.Is(err, ErrBusy):
 		return ClassBusy

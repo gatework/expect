@@ -20,6 +20,9 @@ var (
 	// ErrBufferLimit reports unmatched input beyond the buffer limit. The
 	// input is preserved for the next receiver.
 	ErrBufferLimit = errors.New("expect: buffer limit reached")
+	// ErrOutputLimit reports collected output beyond WithOutputLimit. The
+	// collected part is in Result.Output.
+	ErrOutputLimit = errors.New("expect: output limit reached")
 	// ErrEmptyMatch reports a selected match of zero bytes.
 	ErrEmptyMatch = errors.New("expect: empty match")
 	// ErrInvalidPattern reports a malformed or unusable pattern.
