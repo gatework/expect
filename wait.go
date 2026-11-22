@@ -292,6 +292,20 @@ func (m *member) scanText(o matchOptions) (*entry, scan.Match, bool) {
 	return nil, scan.Match{}, false
 }
 
+// hold returns how many pending bytes no text case or rule of any group
+// can still match once more input arrives.
+func (m *member) hold() int {
+	cut := len(m.s.rx)
+	for _, g := range m.groups() {
+		for _, e := range g {
+			if e.c.Pattern.isText() {
+				cut = min(cut, e.c.Pattern.m.Hold(m.s.rx))
+			}
+		}
+	}
+	return cut
+}
+
 // event returns the first case, in priority order, with one of kinds.
 func (m *member) event(kinds ...patternKind) *entry {
 	for _, g := range m.groups() {

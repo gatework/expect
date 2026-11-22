@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/gatework/expect"
@@ -258,6 +259,32 @@ func TestRelay(t *testing.T) {
 	if tee.String() != "line1\nline2\n" {
 		t.Fatalf("tee %q", tee.String())
 	}
+}
+
+// TestRelay_HoldsSessionRulePrefix checks that a session rule split
+// across chunks is held back, matched and answered rather than forwarded.
+func TestRelay_HoldsSessionRulePrefix(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		pager := expect.Case{Name: "more", Pattern: expect.Literal("--More--"), Limit: expect.Unlimited, Handler: expect.ReplyThenContinue(" ")}
+		src, ps := pipe(t, expect.WithBefore(pager))
+		var tee syncBuffer
+		errc := make(chan error, 1)
+		go func() {
+			errc <- expect.Relay(t.Context(), []expect.Route{{Source: src, Output: &tee, Cases: []expect.Case{lit("end", "END")}}})
+		}()
+		_, _ = io.WriteString(ps.conn, "line1\n--Mo")
+		synctest.Wait()
+		_, _ = io.WriteString(ps.conn, "re--")
+		ps.hear(" ")
+		_, _ = io.WriteString(ps.conn, "line2\nEND")
+		if err := <-errc; err != nil {
+			t.Fatal(err)
+		}
+		if tee.String() != "line1\nline2\n" {
+			t.Fatalf("tee %q", tee.String())
+		}
+	})
 }
 
 func TestRelay_RejectsSharedSource(t *testing.T) {

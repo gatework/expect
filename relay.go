@@ -152,17 +152,15 @@ func (r *relayRoute) step(ctx context.Context, w *waiter, flush bool) (bool, err
 	ended := r.l.ended()
 	cut := len(s.rx)
 	if !flush && !ended {
-		for _, e := range r.m.cases {
-			if e.c.Pattern.isText() {
-				cut = min(cut, e.c.Pattern.m.Hold(s.rx))
-			}
-		}
+		cut = r.m.hold()
 	}
 	if err := r.forward(ctx, s.rx[:cut]); err != nil {
 		return true, err
 	}
-	r.l.consume(cut)
-	r.m.reset()
+	if cut > 0 {
+		r.l.consume(cut)
+		r.m.reset()
+	}
 	if !ended {
 		return false, nil
 	}
