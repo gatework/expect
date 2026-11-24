@@ -89,6 +89,7 @@ func (s *Session) Poll(ctx context.Context, cases []Case, opts ...MatchOption) (
 	o.timeout, o.idle = 0, 0
 	m := newMember(l, cases, o)
 	w := newWaiter(o, l.wake, m)
+	w.noWait = true
 	defer w.timer.stop()
 	for {
 		out := w.step(ctx)

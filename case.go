@@ -3,6 +3,7 @@ package expect
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // Action tells a wait what to do after a handler returns.
@@ -46,6 +47,13 @@ type Case struct {
 	// then observes each candidate once, even as more input arrives;
 	// another case consuming input makes the next candidate new.
 	NoConsume bool
+	// Settle makes the case a prompt: it matches only text on the final
+	// line of pending input, and fires only once no input has arrived for
+	// Settle, so a prompt-like string ("router#", "<HUAWEI>") in output cut
+	// at a chunk boundary does not end the wait early. New input restarts
+	// the quiet period; the end of input confirms at once. Poll, Interact
+	// and Relay do not wait for it. Typical values are 50 to 200 ms.
+	Settle time.Duration
 	// Omit keeps the matched text out of Result.Output (WithOutput); the
 	// text before it is kept. Use it for pagers and prompts, whose text
 	// is not part of a command's output. Result.Match still holds it.
@@ -74,6 +82,9 @@ func (c Case) validate(i int, rule bool) error {
 	}
 	if c.NoConsume && !c.Pattern.isText() {
 		return configError("case", "NoConsume on an event pattern")
+	}
+	if c.Settle < 0 || c.Settle > 0 && !c.Pattern.isText() {
+		return configError("case", "Settle needs a text pattern and a positive duration")
 	}
 	if c.Omit && (c.NoConsume || !c.Pattern.isText()) {
 		return configError("case", "Omit needs a consuming text pattern")

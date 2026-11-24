@@ -1,6 +1,8 @@
 package expect
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"io"
@@ -36,9 +38,14 @@ type member struct {
 	rulesAt  uint64
 	ruled    bool
 	rewrites uint64 // the session's rewrites when scans last restarted
-	collect  bool   // record consumed bytes in out (WithOutput)
-	limit    int    // WithOutputLimit, or zero
-	out      []byte // bytes consumed by matches, in order
+	// settling is a Settle case waiting for quiet input since version
+	// settleAt; it fires at settleDue unless input changes first.
+	settling  *entry
+	settleAt  uint64
+	settleDue time.Time
+	collect   bool   // record consumed bytes in out (WithOutput)
+	limit     int    // WithOutputLimit, or zero
+	out       []byte // bytes consumed by matches, in order
 }
 
 // waiter runs the matching loop over its members until a case returns or
@@ -51,6 +58,9 @@ type waiter struct {
 	next    int // round-robin start for fairness across members
 	timer   budget
 	idle    budget
+	settle  *time.Timer // fires at the earliest settleDue of the members
+	due     time.Time   // when settle is armed for
+	noWait  bool        // Poll: Settle cases fire at once
 	control chan func(*waiter)
 }
 
@@ -96,6 +106,7 @@ func (w *waiter) wait(ctx context.Context) (*member, Result, error) {
 func (w *waiter) run(ctx context.Context) (*member, Result, error) {
 	defer w.timer.stop()
 	defer w.idle.stop()
+	defer w.stopSettle()
 	for {
 		if out := w.step(ctx); out.fired || out.ending {
 			if out.err != nil || out.act == Return {
@@ -106,7 +117,9 @@ func (w *waiter) run(ctx context.Context) (*member, Result, error) {
 			}
 			continue
 		}
+		w.armSettle()
 		select {
+		case <-w.settleC():
 		case <-ctx.Done():
 			m := w.first()
 			return m, m.pending(), m.s.closedErr(ctx.Err())
@@ -151,8 +164,12 @@ func (w *waiter) step(ctx context.Context) outcome {
 
 func (w *waiter) stepMember(ctx context.Context, m *member) outcome {
 	if e, mt, ok := m.scanText(w.o); ok {
+		if !w.settled(m, e) {
+			return outcome{}
+		}
 		return m.fire(ctx, e, mt)
 	}
+	m.settling = nil
 	s := m.s
 	if w.o.stream != nil && len(s.rx) >= min(streamWindow, s.o.bufferLimit) {
 		return w.streamOut(ctx, m)
@@ -167,6 +184,57 @@ func (w *waiter) stepMember(ctx context.Context, m *member) outcome {
 		return w.end(ctx, m)
 	}
 	return outcome{}
+}
+
+// settled reports whether a match of e may fire now. A Settle case waits
+// until its candidate has seen no new input for Settle.
+func (w *waiter) settled(m *member, e *entry) bool {
+	if e.c.Settle <= 0 || w.noWait || m.l.ended() {
+		m.settling = nil
+		return true
+	}
+	if m.settling != e || m.settleAt != m.s.version {
+		m.settling, m.settleAt, m.settleDue = e, m.s.version, time.Now().Add(e.c.Settle)
+		return false
+	}
+	if time.Now().Before(m.settleDue) {
+		return false
+	}
+	m.settling = nil
+	return true
+}
+
+// armSettle points the settle timer at the earliest pending deadline.
+func (w *waiter) armSettle() {
+	var due time.Time
+	for _, m := range w.members {
+		if m.settling != nil && (due.IsZero() || m.settleDue.Before(due)) {
+			due = m.settleDue
+		}
+	}
+	switch {
+	case due.IsZero():
+		w.stopSettle()
+	case w.settle == nil:
+		w.settle, w.due = time.NewTimer(time.Until(due)), due
+	case !due.Equal(w.due):
+		w.settle.Reset(time.Until(due))
+		w.due = due
+	}
+}
+
+func (w *waiter) settleC() <-chan time.Time {
+	if w.settle == nil || w.due.IsZero() {
+		return nil
+	}
+	return w.settle.C
+}
+
+func (w *waiter) stopSettle() {
+	if w.settle != nil {
+		w.settle.Stop()
+		w.due = time.Time{}
+	}
 }
 
 // end handles the end of a member's input once its buffered text could
@@ -305,7 +373,15 @@ func (m *member) scanText(o matchOptions) (*entry, scan.Match, bool) {
 			if !e.c.Pattern.isText() {
 				continue
 			}
-			mt, ok := e.c.Pattern.m.Find(m.s.rx, &e.st, lim)
+			el := lim
+			if e.c.Settle > 0 {
+				line := len(m.s.rx) - bytes.LastIndexByte(m.s.rx, '\n') - 1
+				if line == 0 {
+					continue // a prompt is never an empty line
+				}
+				el.Window = min(line, cmp.Or(el.Window, line))
+			}
+			mt, ok := e.c.Pattern.m.Find(m.s.rx, &e.st, el)
 			if !ok || e.seen && mt.Start == e.seenAt.Start && mt.End == e.seenAt.End {
 				continue
 			}
