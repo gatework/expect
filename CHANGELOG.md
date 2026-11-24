@@ -34,6 +34,11 @@ All notable changes are recorded here, following Keep a Changelog.
   the transport does not interrupt Read within 5 s of Close, an Error
   with the stack (not the value) when a Background handler panics, and
   `OpPoll`, `OpBackground` and `OpRelay` events.
+- Failed waits log an Info line `expect: wait failed` with the cases waited
+  for, the pending size, how long the peer was silent, the timeout and the
+  transcript paths. `WithMatchTrace(n)` adds Tcl `exp_internal`-style
+  Debug lines per scan and a tail of the last n pending bytes, redacted
+  (a secret cut by the tail start stays masked) and quoted.
 - `WithCharset` for GB18030, GBK and Big5 devices: input is decoded to
   UTF-8 across chunk boundaries before recording, redaction and matching,
   so Chinese prompts match and transcripts are readable; sends are

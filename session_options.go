@@ -37,6 +37,7 @@ type sessionOptions struct {
 	stripParity  bool
 	terminal     bool
 	keepalive    time.Duration
+	trace        int
 	charset      encoding.Encoding
 }
 

@@ -81,6 +81,9 @@ func (g *Group) Expect(ctx context.Context, cases []Case, opts ...MatchOption) (
 	if m == nil || m.l == nil {
 		return nil, r, err
 	}
+	if err != nil {
+		m.waitFailed(ctx, OpExpect, o, err)
+	}
 	m.s.emit(ctx, Event{Op: OpExpect, Case: r.Name, Scope: r.Scope, CaseIndex: r.CaseIndex, Duration: time.Since(start), Err: classify(err)})
 	return m.s, r, err
 }

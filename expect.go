@@ -2,6 +2,7 @@ package expect
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -77,8 +78,12 @@ func (s *Session) Exchange(ctx context.Context, line string, cases []Case, opts 
 // wait runs one foreground wait on a held lease.
 func (s *Session) wait(ctx context.Context, l *lease, cases []Case, o matchOptions) (Result, error) {
 	start := time.Now()
-	w := newWaiter(o, l.wake, newMember(l, cases, o))
+	m := newMember(l, cases, o)
+	w := newWaiter(o, l.wake, m)
 	_, r, err := w.wait(ctx)
+	if err != nil {
+		m.waitFailed(ctx, OpExpect, o, err)
+	}
 	s.emit(ctx, Event{Op: OpExpect, Case: r.Name, Scope: r.Scope, CaseIndex: r.CaseIndex, Duration: time.Since(start), Err: classify(err)})
 	return r, err
 }
@@ -102,6 +107,10 @@ func (s *Session) Poll(ctx context.Context, cases []Case, opts ...MatchOption) (
 	o.timeout, o.idle = 0, 0
 	start := time.Now()
 	r, err := s.poll(ctx, l, cases, o)
+	if err != nil && !errors.Is(err, ErrTimeout) {
+		// A Poll without a match is routine; other failures are not.
+		newMember(l, cases, o).waitFailed(ctx, OpPoll, o, err)
+	}
 	s.emit(ctx, Event{Op: OpPoll, Case: r.Name, Scope: r.Scope, CaseIndex: r.CaseIndex, Duration: time.Since(start), Err: classify(err)})
 	return r, err
 }

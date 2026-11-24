@@ -165,11 +165,14 @@ func (w *waiter) step(ctx context.Context) outcome {
 func (w *waiter) stepMember(ctx context.Context, m *member) outcome {
 	if e, mt, ok := m.scanText(w.o); ok {
 		if !w.settled(m, e) {
+			m.trace(ctx, nil)
 			return outcome{}
 		}
+		m.trace(ctx, e)
 		return m.fire(ctx, e, mt)
 	}
 	m.settling = nil
+	m.trace(ctx, nil)
 	s := m.s
 	if w.o.stream != nil && len(s.rx) >= min(streamWindow, s.o.bufferLimit) {
 		return w.streamOut(ctx, m)

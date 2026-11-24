@@ -42,6 +42,9 @@ func (s *Session) Drain(ctx context.Context, quiet time.Duration, opts ...MatchO
 			err = nil
 		}
 	}
+	if err != nil && m != nil {
+		m.waitFailed(ctx, OpDrain, o, err)
+	}
 	s.emit(ctx, Event{Op: OpDrain, Bytes: len(r.Before), Duration: time.Since(start), Err: classify(err)})
 	return r, err
 }

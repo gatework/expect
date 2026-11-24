@@ -143,6 +143,9 @@ func (b *Background) run(ctx context.Context, w *waiter) {
 		} else if !normal {
 			b.err = &CallbackError{Kind: CallbackExited}
 		}
+		if b.err != nil && !errors.Is(b.err, context.Canceled) {
+			w.members[0].waitFailed(ctx, OpBackground, w.o, b.err)
+		}
 		w.members[0].l.release()
 		b.s.emit(ctx, Event{Op: OpBackground, Case: b.r.Name, Scope: b.r.Scope, CaseIndex: b.r.CaseIndex, Duration: time.Since(start), Err: classify(b.err)})
 		b.cancel()
