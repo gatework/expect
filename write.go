@@ -100,12 +100,18 @@ func (s *Session) send(ctx context.Context, p []byte, pacer Pacer) (int, error) 
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
+	wire, err := s.encodeText(p)
+	if err != nil {
+		return 0, err
+	}
+	// The transcript keeps the UTF-8 text, so it reads and redacts alike
+	// whatever the device charset.
 	if err := s.recordSent(p); err != nil {
 		return 0, err
 	}
+	p = wire
 	start := time.Now()
 	var n int
-	var err error
 	if pacer == nil {
 		n, err = s.writeAll(ctx, p)
 	} else {

@@ -11,6 +11,12 @@ All notable changes are recorded here, following Keep a Changelog.
   removed, and backspace and cursor-left erase the pending characters
   before them, as pagers and long-command redraws do. Transcripts,
   Interact and Relay keep the raw bytes.
+- `WithCharset` for GB18030, GBK and Big5 devices: input is decoded to
+  UTF-8 across chunk boundaries before recording, redaction and matching,
+  so Chinese prompts match and transcripts are readable; sends are
+  encoded, and text the charset cannot represent fails with
+  `ErrUnencodable` before anything is written. Relay transcodes between
+  sessions of different charsets.
 
 ## [0.2.0] - 2026-11-21
 

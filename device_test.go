@@ -1,10 +1,14 @@
 package expect_test
 
 import (
+	"errors"
 	"io"
+	"net"
 	"os"
 	"strings"
 	"testing"
+
+	"golang.org/x/text/encoding/simplifiedchinese"
 
 	"github.com/gatework/expect"
 	"github.com/gatework/expect/record"
@@ -70,5 +74,70 @@ func TestTerminalFilter_InteractRaw(t *testing.T) {
 	}
 	if got := out.String(); got != "\x1b[1mr1#\x1b[0m" {
 		t.Fatalf("operator saw %q", got)
+	}
+}
+
+// TestCharset_GB18030 plays a device that speaks GB18030: a Chinese
+// confirmation split inside a character is matched and answered, Chinese
+// text is sent encoded, and the transcript reads as UTF-8.
+func TestCharset_GB18030(t *testing.T) {
+	t.Parallel()
+	gb := func(s string) []byte {
+		b, err := simplifiedchinese.GB18030.NewEncoder().Bytes([]byte(s))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	c := record.DefaultConfig()
+	c.Dir = t.TempDir()
+	rec, err := record.New(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, p := pipe(t, expect.WithCharset(simplifiedchinese.GB18030), expect.WithRecorder(rec))
+	question := gb("确认清除接口配置吗？[Y/N]:")
+	go func() {
+		_, _ = p.conn.Write(question[:3]) // splits the second character
+		_, _ = p.conn.Write(question[3:])
+		p.hear("Y\n")
+		_, _ = p.conn.Write(gb("\r\n成功\r\n<H3C>"))
+		p.hear(string(gb("description 上联核心\n")))
+		_, _ = p.conn.Write([]byte("<H3C>"))
+	}()
+	r, err := s.Expect(t.Context(), []expect.Case{
+		{Name: "confirm", Pattern: expect.Literal("确认清除"), Handler: expect.ReplyLineThenContinue("Y")},
+		{Name: "prompt", Pattern: expect.Literal("<H3C>")},
+	})
+	if err != nil || r.Before != "接口配置吗？[Y/N]:\r\n成功\r\n" {
+		t.Fatalf("got %q, %v", r.Before, err)
+	}
+	if _, err := s.Exchange(t.Context(), "description 上联核心", []expect.Case{{Pattern: expect.Literal("<H3C>")}}); err != nil {
+		t.Fatal(err)
+	}
+	paths := s.Transcript()
+	_ = s.Close()
+	for _, path := range paths {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), "清除接口配置吗") || !strings.Contains(string(b), "上联核心") {
+			t.Fatalf("%s does not read as UTF-8: %q", path, b)
+		}
+	}
+}
+
+func TestCharset_Unencodable(t *testing.T) {
+	t.Parallel()
+	s, _ := pipe(t, expect.WithCharset(simplifiedchinese.GBK))
+	if _, err := s.Send(t.Context(), "emoji 😀"); !errors.Is(err, expect.ErrUnencodable) {
+		t.Fatalf("got %v, want ErrUnencodable", err)
+	}
+	local, remote := net.Pipe()
+	defer local.Close()
+	defer remote.Close()
+	if _, err := expect.NewSession(local, expect.WithoutRecording(), expect.WithCharset(nil)); !errors.As(err, new(*expect.ConfigError)) {
+		t.Fatalf("nil charset: %v", err)
 	}
 }

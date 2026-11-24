@@ -22,6 +22,7 @@ fuzz:
 	$(GO) test -run '^$$' -fuzz '^FuzzFilterChunks$$' -fuzztime=$(FUZZ_EXECUTIONS) -parallel=2 ./internal/redact
 	$(GO) test -run '^$$' -fuzz '^FuzzFilterChunks$$' -fuzztime=$(FUZZ_EXECUTIONS) -parallel=2 ./internal/vt
 	$(GO) test -run '^$$' -fuzz '^FuzzSessionChunks$$' -fuzztime=$(FUZZ_EXECUTIONS) -parallel=2 .
+	$(GO) test -run '^$$' -fuzz '^FuzzCharsetChunks$$' -fuzztime=$(FUZZ_EXECUTIONS) -parallel=2 .
 
 bench:
 	$(GO) test -run '^$$' -bench . -benchmem -benchtime=3x ./...

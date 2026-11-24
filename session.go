@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/text/encoding"
+
 	"github.com/gatework/expect/internal/redact"
 	"github.com/gatework/expect/internal/vt"
 	"github.com/gatework/expect/record"
@@ -47,7 +49,9 @@ type Session struct {
 	rules   atomic.Pointer[ruleSet]
 	rulesMu sync.Mutex // serializes SetRules
 
-	wmu sync.Mutex // serializes writes
+	wmu sync.Mutex        // serializes writes and guards enc
+	enc *encoding.Encoder // WithCharset encoder, or nil
+	dec *streamDecoder    // WithCharset decoder, owned by the read pump
 
 	diagMu   sync.Mutex // guards the redaction filters and the transcript writes
 	rxFilter *redact.Filter
@@ -90,6 +94,9 @@ func NewSession(t io.ReadWriteCloser, opts ...SessionOption) (*Session, error) {
 	s := &Session{
 		id: newID(), t: t, o: o, in: newInbox(), done: make(chan struct{}),
 		rxFilter: redact.New(""), txFilter: redact.New(""),
+	}
+	if o.charset != nil {
+		s.enc, s.dec = o.charset.NewEncoder(), newStreamDecoder(o.charset)
 	}
 	s.tr, err = rec.Open(record.Meta{Session: s.id, Label: o.label, Width: o.cols, Height: o.rows})
 	if err != nil {
@@ -194,8 +201,11 @@ func (s *Session) readLoop() {
 	buf := make([]byte, readSize)
 	for {
 		n, err := s.t.Read(buf)
-		if n > 0 {
+		if n > 0 || err != nil && s.dec != nil {
 			p := s.normalize(buf[:n])
+			if s.dec != nil {
+				p = s.dec.decode(p, err != nil)
+			}
 			if rerr := s.recordReceived(p); rerr != nil {
 				s.in.fail(rerr)
 				return

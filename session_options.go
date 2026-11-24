@@ -5,6 +5,8 @@ import (
 	"slices"
 	"time"
 
+	"golang.org/x/text/encoding"
+
 	"github.com/gatework/expect/record"
 )
 
@@ -34,6 +36,7 @@ type sessionOptions struct {
 	removeNulls  bool
 	stripParity  bool
 	terminal     bool
+	charset      encoding.Encoding
 }
 
 func defaultSessionOptions() sessionOptions {
@@ -193,6 +196,23 @@ func WithStripParity(enabled bool) SessionOption {
 func WithTerminalFilter() SessionOption {
 	return func(o *sessionOptions) error {
 		o.terminal = true
+		return nil
+	}
+}
+
+// WithCharset declares the peer's character set, for devices that speak
+// GB18030, GBK or Big5 rather than UTF-8. Input is decoded to UTF-8 before
+// it is recorded, redacted and matched, so patterns, secrets, Results and
+// transcripts are UTF-8; Send encodes text to enc and fails with
+// ErrUnencodable, sending nothing, when enc cannot represent it. Typical
+// values are simplifiedchinese.GB18030 and traditionalchinese.Big5 from
+// golang.org/x/text/encoding.
+func WithCharset(enc encoding.Encoding) SessionOption {
+	return func(o *sessionOptions) error {
+		if enc == nil {
+			return configError("charset", "nil")
+		}
+		o.charset = enc
 		return nil
 	}
 }

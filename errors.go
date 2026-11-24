@@ -23,6 +23,9 @@ var (
 	// ErrOutputLimit reports collected output beyond WithOutputLimit. The
 	// collected part is in Result.Output.
 	ErrOutputLimit = errors.New("expect: output limit reached")
+	// ErrUnencodable reports text the session charset (WithCharset)
+	// cannot represent; nothing was sent.
+	ErrUnencodable = errors.New("expect: text not representable in the session charset")
 	// ErrEmptyMatch reports a selected match of zero bytes.
 	ErrEmptyMatch = errors.New("expect: empty match")
 	// ErrInvalidPattern reports a malformed or unusable pattern.
