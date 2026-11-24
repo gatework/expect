@@ -69,6 +69,7 @@ type Session struct {
 	closeOnce sync.Once
 	closeErr  error
 	pump      sync.WaitGroup
+	life      lifecycle
 }
 
 type ruleSet struct {
@@ -93,7 +94,7 @@ func NewSession(t io.ReadWriteCloser, opts ...SessionOption) (*Session, error) {
 	}
 	s := &Session{
 		id: newID(), t: t, o: o, in: newInbox(), done: make(chan struct{}),
-		rxFilter: redact.New(""), txFilter: redact.New(""),
+		rxFilter: redact.New(""), txFilter: redact.New(""), life: newLifecycle(),
 	}
 	if o.charset != nil {
 		s.enc, s.dec = o.charset.NewEncoder(), newStreamDecoder(o.charset)
@@ -106,6 +107,10 @@ func NewSession(t io.ReadWriteCloser, opts ...SessionOption) (*Session, error) {
 	s.rules.Store(&ruleSet{before: o.before, after: o.after})
 	s.scope, s.cancel = context.WithCancel(context.Background())
 	s.pump.Go(s.readLoop)
+	if o.keepalive > 0 {
+		s.life.bg.Go(func() { s.keepalive(s.scope, o.keepalive) })
+	}
+	s.logOpened(s.scope)
 	s.emit(s.scope, Event{Op: OpOpen})
 	return s, nil
 }
@@ -128,12 +133,15 @@ func (s *Session) Transcript() []string { return s.tr.Paths() }
 func (s *Session) Close() error {
 	s.closeOnce.Do(func() {
 		start := time.Now()
+		s.end(ErrClosed)
 		s.closed.Store(true)
 		close(s.done)
 		s.cancel()
 		err := s.t.Close()
-		s.pump.Wait()
+		s.joinPump(s.scope)
+		s.life.bg.Wait()
 		s.emit(s.scope, Event{Op: OpClose, Duration: time.Since(start), Err: classify(err)})
+		s.logClosed(s.scope, err)
 		s.closeErr = errors.Join(err, s.finishTranscript())
 	})
 	return s.closeErr
@@ -207,9 +215,11 @@ func (s *Session) readLoop() {
 				p = s.dec.decode(p, err != nil)
 			}
 			if rerr := s.recordReceived(p); rerr != nil {
+				s.end(rerr)
 				s.in.fail(rerr)
 				return
 			}
+			s.noteReceived(len(p))
 			if len(p) > 0 && !s.in.put(p, s.done) {
 				s.in.fail(ErrClosed)
 				return
@@ -219,6 +229,7 @@ func (s *Session) readLoop() {
 			if s.closed.Load() {
 				err = errors.Join(ErrClosed, err)
 			}
+			s.end(err)
 			s.in.fail(err)
 			return
 		}

@@ -20,7 +20,10 @@ func (s *Session) acquire(wake chan struct{}) (*lease, error) {
 	if s.closed.Load() {
 		return nil, ErrClosed
 	}
-	if !s.busy.CompareAndSwap(false, true) {
+	if !s.busy.CompareAndSwap(false, true) && !s.afterKeepalive() {
+		if s.closed.Load() {
+			return nil, ErrClosed
+		}
 		return nil, ErrBusy
 	}
 	if wake == nil {

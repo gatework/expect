@@ -36,6 +36,7 @@ type sessionOptions struct {
 	removeNulls  bool
 	stripParity  bool
 	terminal     bool
+	keepalive    time.Duration
 	charset      encoding.Encoding
 }
 
@@ -213,6 +214,22 @@ func WithCharset(enc encoding.Encoding) SessionOption {
 			return configError("charset", "nil")
 		}
 		o.charset = enc
+		return nil
+	}
+}
+
+// WithKeepalive sends the line ending whenever the session has neither
+// received nor sent for interval and no receiver holds its input, so a
+// device's exec-timeout does not drop a pooled session. The keepalive
+// takes the input while it runs and discards only the peer's answer to it
+// (until 200 ms of quiet, at most 5 s), keeping input a caller has yet to
+// read. Zero disables it, the default.
+func WithKeepalive(interval time.Duration) SessionOption {
+	return func(o *sessionOptions) error {
+		if interval < 0 {
+			return configError("keepalive", "negative")
+		}
+		o.keepalive = interval
 		return nil
 	}
 }

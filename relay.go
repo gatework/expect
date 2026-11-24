@@ -52,14 +52,19 @@ func Relay(ctx context.Context, routes []Route, opts ...MatchOption) error {
 		}
 		rs = append(rs, r)
 	}
+	start := time.Now()
 	g, gctx := errgroup.WithContext(ctx)
 	for _, r := range rs {
 		g.Go(func() error { return r.run(gctx) })
 	}
-	if err := g.Wait(); err != nil && !errors.Is(err, errRelayDone) {
-		return err
+	err := g.Wait()
+	if errors.Is(err, errRelayDone) {
+		err = nil
 	}
-	return nil
+	for _, r := range rs {
+		r.m.s.emit(ctx, Event{Op: OpRelay, Duration: time.Since(start), Err: classify(err)})
+	}
+	return err
 }
 
 // relayRoute is one route's state, owned by its goroutine.

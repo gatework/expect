@@ -23,6 +23,17 @@ All notable changes are recorded here, following Keep a Changelog.
   `ErrNoEcho`. The echo stage reports discarded bytes as an `OpEcho` event.
 - `Session.Drain` discards input until the peer is quiet, bounded by the
   relative timer (`OpDrain` event).
+- Session lifecycle: `Done` and `Err` report a dropped peer, Close or a
+  retiring write without starting a wait; `Stats` (bytes, last activity,
+  waits, failures, `Idle`) serves pools and troubleshooting;
+  `WithKeepalive` keeps idle sessions past exec-timeout, discarding only
+  the answer to the keepalive and making receivers wait rather than fail
+  with `ErrBusy` while it runs.
+- Logs for troubleshooting: Info lines when a session opens and closes
+  (lifetime, cause, bytes, waits, failures, transcript paths), a Warn when
+  the transport does not interrupt Read within 5 s of Close, an Error
+  with the stack (not the value) when a Background handler panics, and
+  `OpPoll`, `OpBackground` and `OpRelay` events.
 - `WithCharset` for GB18030, GBK and Big5 devices: input is decoded to
   UTF-8 across chunk boundaries before recording, redaction and matching,
   so Chinese prompts match and transcripts are readable; sends are

@@ -117,6 +117,7 @@ func (s *Session) send(ctx context.Context, p []byte, pacer Pacer) (int, error) 
 	} else {
 		n, err = s.writePaced(ctx, p, pacer)
 	}
+	s.noteSent(n)
 	s.emit(ctx, Event{Op: OpSend, Bytes: n, Duration: time.Since(start), Err: classify(err)})
 	if err != nil {
 		return n, err
@@ -204,8 +205,14 @@ func (s *Session) writeAll(ctx context.Context, p []byte) (int, error) {
 // retire closes the session after a failed admitted write. The close
 // error stays available from Close; the caller gets the write error.
 func (s *Session) retire(written int, cause error) error {
-	_ = s.Close()
-	return &WriteError{Written: written, Cause: cause}
+	we := &WriteError{Written: written, Cause: cause}
+	s.end(we)
+	// A write interrupted by Close must not call Close again: Close may be
+	// waiting for this goroutine (the keepalive).
+	if !s.closed.Load() {
+		_ = s.Close()
+	}
+	return we
 }
 
 func isClosed(err error) bool {

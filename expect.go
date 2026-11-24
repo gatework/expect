@@ -100,6 +100,13 @@ func (s *Session) Poll(ctx context.Context, cases []Case, opts ...MatchOption) (
 	ctx, cancel := s.scoped(ctx)
 	defer cancel()
 	o.timeout, o.idle = 0, 0
+	start := time.Now()
+	r, err := s.poll(ctx, l, cases, o)
+	s.emit(ctx, Event{Op: OpPoll, Case: r.Name, Scope: r.Scope, CaseIndex: r.CaseIndex, Duration: time.Since(start), Err: classify(err)})
+	return r, err
+}
+
+func (s *Session) poll(ctx context.Context, l *lease, cases []Case, o matchOptions) (Result, error) {
 	m := newMember(l, cases, o)
 	w := newWaiter(o, l.wake, m)
 	w.noWait = true
