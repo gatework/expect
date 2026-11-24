@@ -4,6 +4,14 @@ All notable changes are recorded here, following Keep a Changelog.
 
 ## [Unreleased]
 
+### Added
+
+- `WithTerminalFilter`: waits match the text a line-oriented reader sees.
+  Control sequences (colors, cursor and erase commands, titles) are
+  removed, and backspace and cursor-left erase the pending characters
+  before them, as pagers and long-command redraws do. Transcripts,
+  Interact and Relay keep the raw bytes.
+
 ## [0.2.0] - 2026-11-21
 
 ### Changed

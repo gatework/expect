@@ -87,6 +87,7 @@ func newRelayRoute(i int, rt Route, earlier []Route, opts []MatchOption) (*relay
 	if err != nil {
 		return nil, err
 	}
+	l.raw = true
 	s := rt.Source
 	filter := s.newOutputFilter()
 	return &relayRoute{index: i, rt: rt, l: l, m: newMember(l, rt.Cases, o), o: o, filter: filter}, nil

@@ -20,6 +20,7 @@ cross:
 fuzz:
 	$(GO) test -run '^$$' -fuzz '^FuzzFindChunks$$' -fuzztime=$(FUZZ_EXECUTIONS) -parallel=2 ./internal/scan
 	$(GO) test -run '^$$' -fuzz '^FuzzFilterChunks$$' -fuzztime=$(FUZZ_EXECUTIONS) -parallel=2 ./internal/redact
+	$(GO) test -run '^$$' -fuzz '^FuzzFilterChunks$$' -fuzztime=$(FUZZ_EXECUTIONS) -parallel=2 ./internal/vt
 	$(GO) test -run '^$$' -fuzz '^FuzzSessionChunks$$' -fuzztime=$(FUZZ_EXECUTIONS) -parallel=2 .
 
 bench:

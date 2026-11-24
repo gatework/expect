@@ -27,17 +27,18 @@ type entry struct {
 // member is one session taking part in a wait: a single Expect has one,
 // a Group several.
 type member struct {
-	l       *lease
-	s       *Session
-	cases   []*entry // foreground cases selecting this session
-	call    []*entry // WithRules
-	before  []*entry
-	after   []*entry
-	rulesAt uint64
-	ruled   bool
-	collect bool   // record consumed bytes in out (WithOutput)
-	limit   int    // WithOutputLimit, or zero
-	out     []byte // bytes consumed by matches, in order
+	l        *lease
+	s        *Session
+	cases    []*entry // foreground cases selecting this session
+	call     []*entry // WithRules
+	before   []*entry
+	after    []*entry
+	rulesAt  uint64
+	ruled    bool
+	rewrites uint64 // the session's rewrites when scans last restarted
+	collect  bool   // record consumed bytes in out (WithOutput)
+	limit    int    // WithOutputLimit, or zero
+	out      []byte // bytes consumed by matches, in order
 }
 
 // waiter runs the matching loop over its members until a case returns or
@@ -75,7 +76,7 @@ func newEntries(cases []Case, scope RuleScope, s *Session) []*entry {
 }
 
 func newMember(l *lease, cases []Case, o matchOptions) *member {
-	return &member{l: l, s: l.s, cases: newEntries(cases, ScopeCase, l.s), call: newEntries(o.rules, ScopeCall, l.s), collect: o.output, limit: o.outLimit}
+	return &member{l: l, s: l.s, rewrites: l.s.rewrites, cases: newEntries(cases, ScopeCase, l.s), call: newEntries(o.rules, ScopeCall, l.s), collect: o.output, limit: o.outLimit}
 }
 
 func newWaiter(o matchOptions, wake chan struct{}, members ...*member) *waiter {
@@ -291,6 +292,11 @@ func (m *member) groups() [4][]*entry { return [4][]*entry{m.before, m.cases, m.
 // scanText finds the case to fire: the first group with a match wins;
 // within it the earliest match, or the first declared with Declaration.
 func (m *member) scanText(o matchOptions) (*entry, scan.Match, bool) {
+	if m.rewrites != m.s.rewrites {
+		// The terminal filter erased pending bytes: offsets moved.
+		m.reset()
+		m.rewrites = m.s.rewrites
+	}
 	lim := scan.Limits{Final: m.l.ended(), Window: o.window}
 	for _, g := range m.groups() {
 		var best *entry

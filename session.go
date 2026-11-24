@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gatework/expect/internal/redact"
+	"github.com/gatework/expect/internal/vt"
 	"github.com/gatework/expect/record"
 )
 
@@ -36,10 +37,12 @@ type Session struct {
 	in  *inbox
 
 	// Receive state, owned by the current receiver (busy set).
-	busy    atomic.Bool
-	rx      []byte // pending input
-	rxErr   error  // terminal read error, once seen by a receiver
-	version uint64 // changes whenever rx changes
+	busy     atomic.Bool
+	rx       []byte    // pending input
+	rxErr    error     // terminal read error, once seen by a receiver
+	version  uint64    // changes whenever rx changes
+	vt       vt.Filter // WithTerminalFilter state across chunks
+	rewrites uint64    // counts erasures of pending bytes; scans restart
 
 	rules   atomic.Pointer[ruleSet]
 	rulesMu sync.Mutex // serializes SetRules

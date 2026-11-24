@@ -33,6 +33,7 @@ type sessionOptions struct {
 	after        []Case
 	removeNulls  bool
 	stripParity  bool
+	terminal     bool
 }
 
 func defaultSessionOptions() sessionOptions {
@@ -178,6 +179,20 @@ func WithRemoveNulls(enabled bool) SessionOption {
 func WithStripParity(enabled bool) SessionOption {
 	return func(o *sessionOptions) error {
 		o.stripParity = enabled
+		return nil
+	}
+}
+
+// WithTerminalFilter makes waits see the text a line-oriented reader
+// would: terminal control sequences (colors, cursor and erase commands,
+// window titles) are removed, and backspace and cursor-left erase the
+// characters before them on the current line, as devices do to wipe a
+// pager prompt or redraw a long command. Patterns, Results and Output then
+// hold plain text. Transcripts keep the raw bytes for faithful replay;
+// Interact and Relay forward raw bytes too.
+func WithTerminalFilter() SessionOption {
+	return func(o *sessionOptions) error {
+		o.terminal = true
 		return nil
 	}
 }

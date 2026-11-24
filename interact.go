@@ -48,6 +48,7 @@ func (s *Session) interact(ctx context.Context, input io.ReadCloser, output io.W
 	if err != nil {
 		return err
 	}
+	l.raw = true
 	defer l.release()
 	ctx, cancel := s.scoped(ctx)
 	defer cancel()
