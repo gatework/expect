@@ -25,8 +25,33 @@ r, err := s.Expect(ctx, []expect.Case{
 }, expect.WithTimeout(30*time.Second))
 ```
 
-See [example_test.go](example_test.go) (pager, background syslog watch) and
-`go run ./examples/dialogue`.
+See [example_test.go](example_test.go) (pager, background syslog watch,
+interface resets, a device session) and `go run ./examples/dialogue`.
+
+## Real device sessions
+
+Devices print colors and cursor commands, wipe their pagers, cut output at
+any byte, leave late messages behind a prompt and, on older Chinese
+platforms, speak GB18030. A session for them usually combines:
+
+```go
+s, err := expect.NewSession(stream,
+	expect.WithTerminalFilter(),                  // match the text a screen shows
+	expect.WithCharset(simplifiedchinese.GB18030), // only for GB18030/GBK/Big5 devices
+	expect.WithKeepalive(5*time.Minute),           // outlive the device's exec-timeout
+)
+prompt := expect.Case{Name: "prompt", Pattern: expect.Line("router#"), Omit: true,
+	Settle: 100 * time.Millisecond} // a prompt-like string cut at a read is not the prompt
+r, err := s.Exchange(ctx, "show version", []expect.Case{pager, prompt},
+	expect.WithEchoWait(2*time.Second), // answers stay with their command
+	expect.WithOutputLimit(64<<20))     // r.Output: the command's output, pagers omitted
+```
+
+When a wait fails, the session logger gets one Info line with the cases,
+the pending size, the device's silence and the transcript to open;
+`WithMatchTrace(n)` adds a redacted tail of what the device sent. A
+transcript recorded on a real device replays offline with
+`expecttest.Replay`.
 
 ## Session transcripts
 
@@ -51,18 +76,21 @@ Explicit options win over the environment: `expect.WithRecorder(r)` with a
 
 | Task | API |
 | --- | --- |
-| Match | `Literal`, `Line`, `Compile`/`MustCompile`, `FromRegexp`, `Glob`, `All`, `Pattern.Fold` |
+| Match | `Literal`, `Line`, `Compile`/`MustCompile`, `FromRegexp`, `Glob`, `All`, `Pattern.Fold`, `Case.Settle` |
+| Command and answer | `Exchange`, `WithEcho`, `WithEchoWait`, `Drain`, `WithOutput`, `WithOutputLimit`, `Case.Omit`, `Then`/`ThenKeepTimer` |
+| Device text | `WithTerminalFilter`, `WithCharset`, `WithRemoveNulls`, `WithStripParity` |
 | Events | `EOF`, `Timeout`, `Default`, `FullBuffer` |
 | Reuse rules | `WithBefore`, `WithAfter`, `WithRules`, `SetRules` |
 | Bound a wait | `WithTimeout`, `WithIdleTimeout`, `Case.Limit`, `WithSearchWindow` |
 | Large output | `WithStreamingFallback`, `WithBufferLimit` |
 | Send | `Send`, `SendLine`, `SendSlow`, `SendPaced`, `SendNull`, `SendBreak` |
-| Observe | `WithLogger`, `WithObserver`, `Session.Transcript` |
+| Observe | `WithLogger`, `WithObserver`, `WithMatchTrace`, `Session.Transcript`, `Session.Stats` |
+| Lifecycle | `Session.Done`, `Session.Err`, `WithKeepalive`, `Session.Resize` |
 | Hand over | `Interact`, `InteractTerminal` |
 | Several sessions | `Group`, `Relay` |
 | Asynchronous watch | `StartBackground` (`Pause`, `Resume`, `Stop`, `Wait`) |
 | Local programs | `spawn.Start`, `spawn.NewConsole` |
-| Tests | `expecttest.Pipe` scripted peers |
+| Tests | `expecttest.Pipe` scripted peers, `expecttest.Replay` and `record.ReadCast` for recorded transcripts |
 
 ## Documentation
 
