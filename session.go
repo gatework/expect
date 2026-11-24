@@ -24,6 +24,10 @@ import (
 
 const readSize = 32 << 10
 
+// Mask is the text that replaces a redacted secret in transcripts and
+// interactive output.
+const Mask = redact.Mask
+
 // Session is a conversation with one peer over a byte stream it owns.
 //
 // One receiver at a time (Expect, Poll, Interact, Background, Group,

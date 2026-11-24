@@ -224,3 +224,21 @@ func TestRecorder_Required(t *testing.T) {
 		t.Fatalf("optional recording failure: %v", err)
 	}
 }
+
+func TestReadCast_Rejects(t *testing.T) {
+	t.Parallel()
+	for name, in := range map[string]string{
+		"empty":   "",
+		"version": `{"version":1}` + "\n",
+		"event":   `{"version":2}` + "\n" + `[1.0, "o"]` + "\n",
+		"time":    `{"version":2}` + "\n" + `["x", "o", "a"]` + "\n",
+	} {
+		if _, err := record.ReadCast(strings.NewReader(in)); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	c, err := record.ReadCast(strings.NewReader(`{"version":2,"width":120,"height":40,"timestamp":1,"title":"r1"}` + "\n\n" + `[0.5, "o", "a\u001b[0m"]` + "\n"))
+	if err != nil || c.Width != 120 || c.Title != "r1" || len(c.Frames) != 1 || c.Frames[0].Data != "a\x1b[0m" || c.Frames[0].At != 500*time.Millisecond {
+		t.Fatalf("got %+v, %v", c, err)
+	}
+}

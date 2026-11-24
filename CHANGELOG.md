@@ -39,6 +39,12 @@ All notable changes are recorded here, following Keep a Changelog.
   transcript paths. `WithMatchTrace(n)` adds Tcl `exp_internal`-style
   Debug lines per scan and a tail of the last n pending bytes, redacted
   (a secret cut by the tail start stays masked) and quoted.
+- Transcript replay: `record.ReadCast` parses cast transcripts and
+  `expecttest.Replay` plays one as the peer, so a session recorded on a
+  real device reproduces offline as a regression test. Output frames are
+  said again, input frames checked, and recorded secrets (`expect.Mask`)
+  match any text (`expecttest.HearMasked`); `WithReplaySpeed` plays the
+  recorded pauses.
 - `WithCharset` for GB18030, GBK and Big5 devices: input is decoded to
   UTF-8 across chunk boundaries before recording, redaction and matching,
   so Chinese prompts match and transcripts are readable; sends are
