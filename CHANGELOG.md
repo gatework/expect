@@ -16,6 +16,13 @@ All notable changes are recorded here, following Keep a Changelog.
   duration, so a prompt-like string in output cut at a chunk boundary
   (`description core#`, Huawei `#` separators) no longer ends a command
   early. End of input confirms at once; Poll does not wait.
+- `WithEcho` synchronizes an Exchange on the echo of its line: input
+  pending before the send and input arriving before the echo (late output,
+  the prompt or echo of a timed-out command) is discarded instead of being
+  taken as the new command's answer. A missing echo fails with
+  `ErrNoEcho`. The echo stage reports discarded bytes as an `OpEcho` event.
+- `Session.Drain` discards input until the peer is quiet, bounded by the
+  relative timer (`OpDrain` event).
 - `WithCharset` for GB18030, GBK and Big5 devices: input is decoded to
   UTF-8 across chunk boundaries before recording, redaction and matching,
   so Chinese prompts match and transcripts are readable; sends are

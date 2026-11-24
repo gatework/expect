@@ -246,3 +246,105 @@ func TestSettle_Group(t *testing.T) {
 		}
 	})
 }
+
+// TestEcho_StaleOutput leaves late output and a prompt of the previous
+// command pending: without WithEcho the Exchange would return them as the
+// answer to the new command.
+func TestEcho_StaleOutput(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		s, p := pipe(t)
+		prompt := []expect.Case{{Name: "prompt", Pattern: expect.Literal("r1#"), Omit: true}}
+		_, _ = io.WriteString(p.conn, "late output of the previous command\r\nr1#")
+		go func() {
+			p.hear("show clock\n")
+			_, _ = io.WriteString(p.conn, "show clock\r\n10:00:00 CST\r\nr1#")
+		}()
+		r, err := s.Exchange(t.Context(), "show clock", prompt, expect.WithEcho())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Output != "\r\n10:00:00 CST\r\n" {
+			t.Fatalf("output %q", r.Output)
+		}
+	})
+}
+
+// TestEcho_RetryAfterTimeout retries a command whose first echo is still
+// pending: the stale echo must not satisfy the retry.
+func TestEcho_RetryAfterTimeout(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		s, p := pipe(t)
+		prompt := []expect.Case{{Name: "prompt", Pattern: expect.Literal("r1#"), Omit: true}}
+		go func() {
+			p.hear("show run\n")
+			_, _ = io.WriteString(p.conn, "show run\r\nBuilding configuration...")
+			p.hear("show run\n")
+			_, _ = io.WriteString(p.conn, "\r\nhostname r1\r\nr1#show run\r\nhostname r1\r\nr1#")
+		}()
+		if _, err := s.Exchange(t.Context(), "show run", prompt, expect.WithEcho(), expect.WithTimeout(time.Second)); !errors.Is(err, expect.ErrTimeout) {
+			t.Fatalf("first try: %v", err)
+		}
+		r, err := s.Exchange(t.Context(), "show run", prompt, expect.WithEcho(), expect.WithTimeout(time.Second))
+		if err != nil || r.Output != "\r\nhostname r1\r\n" {
+			t.Fatalf("retry: %q, %v", r.Output, err)
+		}
+	})
+}
+
+func TestEcho_Missing(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		s, p := pipe(t)
+		go func() {
+			p.hear("secret\n")
+			_, _ = io.WriteString(p.conn, "\r\nr1#")
+		}()
+		_, err := s.Exchange(t.Context(), "secret", []expect.Case{lit("prompt", "r1#")}, expect.WithEcho(), expect.WithTimeout(time.Second))
+		if !errors.Is(err, expect.ErrNoEcho) || !errors.Is(err, expect.ErrTimeout) {
+			t.Fatalf("got %v", err)
+		}
+	})
+}
+
+// TestDrain discards a burst of late output once the peer is quiet, and
+// times out on a peer that never is.
+func TestDrain(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		s, p := pipe(t)
+		go func() {
+			for range 3 {
+				_, _ = io.WriteString(p.conn, "syslog line\r\n")
+				time.Sleep(50 * time.Millisecond)
+			}
+		}()
+		r, err := s.Drain(t.Context(), 200*time.Millisecond)
+		if err != nil || r.Before != strings.Repeat("syslog line\r\n", 3) {
+			t.Fatalf("drained %q, %v", r.Before, err)
+		}
+		if r, _ := s.Poll(t.Context(), nil); r.Before != "" {
+			t.Fatalf("left %q", r.Before)
+		}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for {
+				if _, err := io.WriteString(p.conn, "."); err != nil {
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		}()
+		_, err = s.Drain(t.Context(), 100*time.Millisecond, expect.WithTimeout(time.Second))
+		_ = p.conn.Close()
+		<-done
+		if !errors.Is(err, expect.ErrTimeout) {
+			t.Fatalf("chatty peer: %v", err)
+		}
+		if _, err := s.Drain(t.Context(), 0); !errors.As(err, new(*expect.ConfigError)) {
+			t.Fatalf("zero quiet: %v", err)
+		}
+	})
+}

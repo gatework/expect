@@ -54,8 +54,21 @@ func (s *Session) Exchange(ctx context.Context, line string, cases []Case, opts 
 	defer l.release()
 	ctx, cancel := s.scoped(ctx)
 	defer cancel()
+	stale := 0
+	if o.echo && line != "" {
+		stale = l.discard()
+	}
 	if _, err := s.SendLine(ctx, line); err != nil {
 		return failed(s.id, s.rx), err
+	}
+	if o.echo && line != "" {
+		start := time.Now()
+		n, err := s.awaitEcho(ctx, l, line, o)
+		stale += n
+		s.emit(ctx, Event{Op: OpEcho, Bytes: stale, Duration: time.Since(start), Err: classify(err)})
+		if err != nil {
+			return failed(s.id, s.rx), err
+		}
 	}
 	o.output = true
 	return s.wait(ctx, l, cases, o)

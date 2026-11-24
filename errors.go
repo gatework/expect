@@ -26,6 +26,9 @@ var (
 	// ErrUnencodable reports text the session charset (WithCharset)
 	// cannot represent; nothing was sent.
 	ErrUnencodable = errors.New("expect: text not representable in the session charset")
+	// ErrNoEcho reports a device that did not echo an Exchange line sent
+	// WithEcho; it wraps the cause, usually ErrTimeout.
+	ErrNoEcho = errors.New("expect: no echo of the line sent")
 	// ErrEmptyMatch reports a selected match of zero bytes.
 	ErrEmptyMatch = errors.New("expect: empty match")
 	// ErrInvalidPattern reports a malformed or unusable pattern.

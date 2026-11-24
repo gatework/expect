@@ -36,6 +36,7 @@ type matchOptions struct {
 	window     int
 	output     bool
 	outLimit   int
+	echo       bool
 }
 
 // WithTimeout sets the relative timer of the wait, which includes handler

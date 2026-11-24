@@ -20,7 +20,11 @@ const (
 	OpSend     Operation = "send"
 	OpBreak    Operation = "break"
 	OpInteract Operation = "interact"
-	OpClose    Operation = "close"
+	OpDrain    Operation = "drain"
+	// OpEcho is the echo stage of an Exchange WithEcho; Bytes counts the
+	// stale input it discarded.
+	OpEcho  Operation = "echo"
+	OpClose Operation = "close"
 )
 
 // String returns the operation name.
