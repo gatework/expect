@@ -43,9 +43,10 @@ type member struct {
 	settling  *entry
 	settleAt  uint64
 	settleDue time.Time
-	collect   bool   // record consumed bytes in out (WithOutput)
-	limit     int    // WithOutputLimit, or zero
-	out       []byte // bytes consumed by matches, in order
+	lazy      *lazyText // the returning result's text still to take from out
+	collect   bool      // record consumed bytes in out (WithOutput)
+	limit     int       // WithOutputLimit, or zero
+	out       []byte    // bytes consumed by matches, in order
 }
 
 // waiter runs the matching loop over its members until a case returns or
@@ -62,6 +63,14 @@ type waiter struct {
 	due     time.Time   // when settle is armed for
 	noWait  bool        // Poll: Settle cases fire at once
 	control chan func(*waiter)
+}
+
+// lazyText describes a returning result whose text is taken from the end
+// of the collected output instead of being copied: its last tail bytes,
+// Before up to split and, with match, Match from split.
+type lazyText struct {
+	tail, split int
+	match       bool
 }
 
 // outcome is what one step of the loop produced.
@@ -280,10 +289,17 @@ func (m *member) fire(ctx context.Context, e *entry, mt scan.Match) outcome {
 	// A returning match without handler takes its text from Output, so
 	// a large output is copied once; an omitted match is not in Output.
 	lazy := m.collect && e.c.Handler == nil && !e.c.NoConsume
-	r := m.result(e, mt, lazy, lazy && !e.c.Omit)
+	var lt *lazyText
+	if lazy {
+		lt = &lazyText{tail: mt.Start, split: mt.Start}
+		if !e.c.Omit {
+			lt.tail, lt.match = mt.End, true
+		}
+	}
+	r := m.result(e, mt, lt)
 	if e.c.NoConsume {
 		e.seen, e.seenAt = true, scan.Match{Start: mt.Start, End: mt.End}
-		return m.handle(ctx, e, r)
+		return m.handle(ctx, e, r, mt.End)
 	}
 	keep := mt.End
 	if e.c.Omit {
@@ -292,7 +308,8 @@ func (m *member) fire(ctx context.Context, e *entry, mt scan.Match) outcome {
 	if out, ok := m.take(mt.End, keep); !ok {
 		return out
 	}
-	return m.handle(ctx, e, r)
+	m.lazy = lt
+	return m.handle(ctx, e, r, mt.End)
 }
 
 // fireEvent runs an event case, consuming n pending bytes into Before.
@@ -301,9 +318,8 @@ func (m *member) fireEvent(ctx context.Context, e *entry, n int) outcome {
 		return out
 	}
 	r := failed(m.s.id, nil)
-	if m.collect && e.c.Handler == nil {
-		r.tail, r.split = n, n
-	} else {
+	lazy := m.collect && e.c.Handler == nil
+	if !lazy {
 		r.Before = string(m.s.rx[:n])
 	}
 	r.Name, r.Scope = e.c.Name, e.scope
@@ -311,7 +327,10 @@ func (m *member) fireEvent(ctx context.Context, e *entry, n int) outcome {
 	if out, ok := m.take(n, n); !ok {
 		return out
 	}
-	return m.handle(ctx, e, r)
+	if lazy {
+		m.lazy = &lazyText{tail: n, split: n}
+	}
+	return m.handle(ctx, e, r, n)
 }
 
 // streamOut hands the older half of the pending window to the streaming
@@ -329,8 +348,9 @@ func (w *waiter) streamOut(ctx context.Context, m *member) outcome {
 	return outcome{m: m, r: r, act: act, err: err, fired: true}
 }
 
-func (m *member) handle(ctx context.Context, e *entry, r Result) outcome {
-	m.s.emit(ctx, Event{Op: OpMatch, Case: e.c.Name, Scope: e.scope, CaseIndex: r.CaseIndex, Bytes: max(r.tail, len(r.Before)+len(r.Match))})
+// handle reports a match of n bytes and runs its handler.
+func (m *member) handle(ctx context.Context, e *entry, r Result, n int) outcome {
+	m.s.emit(ctx, Event{Op: OpMatch, Case: e.c.Name, Scope: e.scope, CaseIndex: r.CaseIndex, Bytes: n})
 	if e.c.Handler == nil {
 		return outcome{m: m, r: r, act: Return, fired: true}
 	}
@@ -476,35 +496,35 @@ func (m *member) finish(r Result) Result {
 func (m *member) output(r Result) Result {
 	out := string(m.out)
 	r.Output = out
-	if r.tail == 0 {
-		return r
+	lt := m.lazy
+	m.lazy = nil
+	if lt == nil || r.CaseIndex < 0 && r.RuleIndex < 0 {
+		return r // not the lazy match: a failure, a handler's result
 	}
-	buf := out[len(out)-r.tail:]
-	r.Before = buf[:r.split]
-	if r.lazyMatch {
-		r.Match = buf[r.split:]
+	buf := out[len(out)-lt.tail:]
+	r.Before = buf[:lt.split]
+	if lt.match {
+		r.Match = buf[lt.split:]
 		for i, c := range r.Captures {
 			if c.Matched {
 				r.Captures[i].Text = buf[c.Start:c.End]
 			}
 		}
 	}
-	r.tail, r.split, r.lazyMatch = 0, 0, false
 	return r
 }
 
 func (m *member) pending() Result { return failed(m.s.id, m.s.rx) }
 
-// result describes a text match. A lazy result leaves Before, and with
-// lazyMatch also Match and captures, to output.
-func (m *member) result(e *entry, mt scan.Match, lazy, lazyMatch bool) Result {
+// result describes a text match. With lt, Before (and with lt.match also
+// Match and captures) are left to output.
+func (m *member) result(e *entry, mt scan.Match, lt *lazyText) Result {
 	buf := m.s.rx[:mt.End]
 	r := Result{Session: m.s.id, Name: e.c.Name, Scope: e.scope, Start: mt.Start, End: mt.End, groups: slices.Clone(mt.Groups)}
+	lazyMatch := lt != nil && lt.match
 	switch {
 	case lazyMatch:
-		r.tail, r.split, r.lazyMatch = mt.End, mt.Start, true
-	case lazy:
-		r.tail, r.split = mt.Start, mt.Start
+	case lt != nil:
 		r.Match = string(buf[mt.Start:])
 	default:
 		r.Before, r.Match = string(buf[:mt.Start]), string(buf[mt.Start:])

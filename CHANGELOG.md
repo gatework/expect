@@ -56,6 +56,19 @@ All notable changes are recorded here, following Keep a Changelog.
   `ErrUnencodable` before anything is written. Relay transcodes between
   sessions of different charsets.
 
+### Fixed
+
+- `Required` transcripts write through instead of buffering, so a
+  recording failure fails the session at once again.
+
+### Performance
+
+- Case-insensitive prefilters find candidates with `bytes.IndexByte` on a
+  byte that has no case, instead of comparing byte by byte: 30 folded
+  rules over 1.2 MB, -83%. Session benchmarks now read from an in-memory
+  transport, so they measure the engine rather than `net.Pipe`
+  hand-offs.
+
 ## [0.2.0] - 2026-11-21
 
 ### Changed

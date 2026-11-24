@@ -6,34 +6,76 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gatework/expect"
 	"github.com/gatework/expect/record"
 )
 
-// benchSession runs one Expect per iteration against a peer that writes
-// body in 4 KiB chunks.
+// chunkConn is an in-memory transport that returns body in 4 KiB reads,
+// like a socket with data waiting, so benchmarks measure the engine and
+// not goroutine hand-offs. Writes are discarded.
+type chunkConn struct {
+	body   []byte
+	at     int
+	eof    bool // end the stream after body instead of waiting for Close
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newChunkConn(body []byte) *chunkConn { return &chunkConn{body: body, closed: make(chan struct{})} }
+
+func (c *chunkConn) Read(p []byte) (int, error) {
+	if c.at == len(c.body) {
+		if !c.eof {
+			<-c.closed
+		}
+		return 0, io.EOF
+	}
+	n := copy(p[:min(len(p), 4096)], c.body[c.at:])
+	c.at += n
+	return n, nil
+}
+func (c *chunkConn) Write(p []byte) (int, error) { return len(p), nil }
+func (c *chunkConn) Close() error                { c.once.Do(func() { close(c.closed) }); return nil }
+
+// benchSession runs one Expect per iteration against an in-memory peer
+// holding body.
 func benchSession(b *testing.B, body []byte, cases []expect.Case, opts ...expect.SessionOption) {
 	b.Helper()
-	b.SetBytes(int64(len(body)))
+	benchConn(b, func() *chunkConn { return newChunkConn(body) }, len(body), cases, opts...)
+}
+
+func benchConn(b *testing.B, conn func() *chunkConn, size int, cases []expect.Case, opts ...expect.SessionOption) {
+	b.Helper()
+	b.SetBytes(int64(size))
 	for b.Loop() {
-		local, remote := net.Pipe()
-		s, err := expect.NewSession(local, append([]expect.SessionOption{expect.WithoutRecording(), expect.WithBufferLimit(64 << 20)}, opts...)...)
+		s, err := expect.NewSession(conn(), append([]expect.SessionOption{expect.WithoutRecording(), expect.WithBufferLimit(64 << 20)}, opts...)...)
 		if err != nil {
 			b.Fatal(err)
 		}
-		go func() {
-			for at := 0; at < len(body); at += 4096 {
-				_, _ = remote.Write(body[at:min(at+4096, len(body))])
-			}
-		}()
 		if _, err := s.Expect(b.Context(), cases); err != nil {
 			b.Fatal(err)
 		}
 		_ = s.Close()
-		_ = remote.Close()
 	}
+}
+
+var ansiBody = []byte(strings.Repeat("\x1b[1minterface\x1b[0m GigabitEthernet0/1\r\n description uplink\x1b[K\r\n", 20000) + "\x1b[32mrouter#\x1b[0m")
+
+// BenchmarkSession_TerminalFilter measures WithTerminalFilter on output
+// full of control sequences.
+func BenchmarkSession_TerminalFilter(b *testing.B) {
+	benchSession(b, ansiBody, []expect.Case{{Pattern: expect.Literal("router#")}}, expect.WithTerminalFilter())
+}
+
+// BenchmarkSession_SettlePrompt measures a Settle prompt's final-line
+// search on large output; the input ends, so nothing waits.
+func BenchmarkSession_SettlePrompt(b *testing.B) {
+	conn := func() *chunkConn { c := newChunkConn(configBody); c.eof = true; return c }
+	benchConn(b, conn, len(configBody), []expect.Case{{Pattern: expect.MustCompile(`[\w.-]+#\s*$`), Settle: time.Hour}})
 }
 
 var configBody = []byte(strings.Repeat("interface GigabitEthernet0/1\r\n description uplink to core\r\n", 20000) + "router#")

@@ -133,7 +133,7 @@ func (t *Transcript) open(f Format, path string, m Meta, start time.Time, maxMB 
 		return fmt.Errorf("record: %s: %w", f, err)
 	}
 	limit := int64(maxMB) << 20
-	bf := newBufferedFile(file)
+	bf := newBufferedFile(file, t.required)
 	switch f {
 	case FormatLog:
 		t.text = &textSink{w: &capped{w: bf, limit: limit, marker: "\n--- recording truncated: size limit ---\n"}}

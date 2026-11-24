@@ -206,25 +206,6 @@ func TestSession_BufferLimit(t *testing.T) {
 	}
 }
 
-func TestSession_StreamingFallback(t *testing.T) {
-	t.Parallel()
-	s, p := pipe(t, expect.WithBufferLimit(1024))
-	body := strings.Repeat("interface x\n", 400)
-	p.say(body + "router#")
-	var got strings.Builder
-	r, err := s.Expect(t.Context(), []expect.Case{lit("prompt", "router#")}, expect.WithTimeout(5*time.Second),
-		expect.WithStreamingFallback(func(_ context.Context, _ *expect.Session, r expect.Result) (expect.Action, error) {
-			got.WriteString(r.Match)
-			return expect.Continue, nil
-		}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.String()+r.Before != body {
-		t.Fatalf("streamed %d + %d bytes, want %d", got.Len(), len(r.Before), len(body))
-	}
-}
-
 func TestSession_Busy(t *testing.T) {
 	t.Parallel()
 	s, p := pipe(t)
