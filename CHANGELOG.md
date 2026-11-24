@@ -4,6 +4,8 @@ All notable changes are recorded here, following Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-24
+
 ### Added
 
 - `WithTerminalFilter`: waits match the text a line-oriented reader sees.
