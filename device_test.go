@@ -256,6 +256,7 @@ func TestEcho_StaleOutput(t *testing.T) {
 		s, p := pipe(t)
 		prompt := []expect.Case{{Name: "prompt", Pattern: expect.Literal("r1#"), Omit: true}}
 		_, _ = io.WriteString(p.conn, "late output of the previous command\r\nr1#")
+		synctest.Wait() // the read pump has queued it
 		go func() {
 			p.hear("show clock\n")
 			_, _ = io.WriteString(p.conn, "show clock\r\n10:00:00 CST\r\nr1#")
@@ -345,6 +346,50 @@ func TestDrain(t *testing.T) {
 		}
 		if _, err := s.Drain(t.Context(), 0); !errors.As(err, new(*expect.ConfigError)) {
 			t.Fatalf("zero quiet: %v", err)
+		}
+	})
+}
+
+// TestEchoWait_Degrades checks that a device that does not echo delays an
+// Exchange by the echo wait instead of failing it, and that a stale prompt
+// pending at the send is still discarded.
+func TestEchoWait_Degrades(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		s, p := pipe(t)
+		prompt := []expect.Case{{Name: "prompt", Pattern: expect.Literal("r1#"), Omit: true}}
+		_, _ = io.WriteString(p.conn, "stale r1#")
+		synctest.Wait() // the read pump has queued it
+		go func() {
+			p.hear("show clock\n")
+			_, _ = io.WriteString(p.conn, "\r\n10:00:00 CST\r\nr1#") // redrawn, no echo
+		}()
+		start := time.Now()
+		r, err := s.Exchange(t.Context(), "show clock", prompt, expect.WithEchoWait(200*time.Millisecond), expect.WithTimeout(time.Minute))
+		if err != nil || r.Output != "\r\n10:00:00 CST\r\n" {
+			t.Fatalf("output %q, %v", r.Output, err)
+		}
+		if d := time.Since(start); d != 200*time.Millisecond {
+			t.Fatalf("took %v, want the echo wait", d)
+		}
+	})
+}
+
+func TestEchoWait_Synchronizes(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		s, p := pipe(t)
+		prompt := []expect.Case{{Name: "prompt", Pattern: expect.Literal("r1#"), Omit: true}}
+		go func() {
+			p.hear("show clock\n")
+			_, _ = io.WriteString(p.conn, "late r1#show clock\r\n10:00:00 CST\r\nr1#")
+		}()
+		r, err := s.Exchange(t.Context(), "show clock", prompt, expect.WithEchoWait(time.Second))
+		if err != nil || r.Output != "\r\n10:00:00 CST\r\n" {
+			t.Fatalf("output %q, %v", r.Output, err)
+		}
+		if _, err := s.Exchange(t.Context(), "x", prompt, expect.WithEchoWait(0)); !errors.As(err, new(*expect.ConfigError)) {
+			t.Fatalf("zero wait: %v", err)
 		}
 	})
 }

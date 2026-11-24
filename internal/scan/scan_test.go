@@ -141,6 +141,8 @@ func FuzzFindChunks(f *testing.F) {
 		mustLiteral(f, "WORD", true),
 		mustLiteral(f, "sk:", true),
 		mustGlob(f, "*r#"),
+		mustStarLiteral(f, "*r#", "r#"),
+		mustStarLiteral(f, "**aa", "aa"),
 		Regexp(regexp.MustCompile(`(?i)ques?tion \[y/n\]`)),
 		Regexp(regexp.MustCompile(`(?s)Bu.*\[OK\]`)),
 		Regexp(regexp.MustCompile("a\uFFFDb")),
@@ -148,6 +150,8 @@ func FuzzFindChunks(f *testing.F) {
 	f.Add([]byte("Are you SURE? [Y/N]"), uint8(4), uint8(7))
 	f.Add([]byte("x\xe2\x84\xaak:"), uint8(1), uint8(4))
 	f.Add([]byte("a\xffb"), uint8(1), uint8(8))
+	f.Add([]byte("xr#yr#\xe4r#"), uint8(2), uint8(9))
+	f.Add([]byte("aaaab"), uint8(1), uint8(10))
 	f.Fuzz(func(t *testing.T, data []byte, step, which uint8) {
 		m := matchers[int(which)%len(matchers)]
 		var st State
@@ -176,6 +180,15 @@ func FuzzFindChunks(f *testing.F) {
 			}
 		}
 	})
+}
+
+func mustStarLiteral(tb testing.TB, glob, lit string) *Matcher {
+	tb.Helper()
+	re, err := Glob(glob, false)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return StarLiteral(re, []byte(lit))
 }
 
 func mustGlob(tb testing.TB, pattern string) *Matcher {

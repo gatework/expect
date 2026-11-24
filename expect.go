@@ -3,6 +3,7 @@ package expect
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 )
 
@@ -67,7 +68,11 @@ func (s *Session) Exchange(ctx context.Context, line string, cases []Case, opts 
 		n, err := s.awaitEcho(ctx, l, line, o)
 		stale += n
 		s.emit(ctx, Event{Op: OpEcho, Bytes: stale, Duration: time.Since(start), Err: classify(err)})
-		if err != nil {
+		switch {
+		case errors.Is(err, errEchoMissed):
+			s.log.LogAttrs(ctx, slog.LevelInfo, "expect: no echo, matching without it",
+				slog.Duration("waited", time.Since(start).Round(time.Millisecond)), slog.Int("pending", len(s.rx)))
+		case err != nil:
 			return failed(s.id, s.rx), err
 		}
 	}
