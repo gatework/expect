@@ -32,7 +32,7 @@
 - 写前失败（关闭、上下文已结束、必需录像失败）会话仍可用；进入传输后的失败关闭会话，返回 `*WriteError{Written}`，不重放（`TestSession_WriteErrorRetires`）。
 - 有写截止时间的传输经截止时间中断，否则关闭传输中断；清除已关闭传输的截止时间无害。
 - `SendSlow`/`SendPaced`/`SendNull`/`SendBreak`（`TestSession_SendVariants`、`TestSession_SendBreak`、`TestSession_SendNull`、`TestSession_SendSlow`、`TestSession_SendPacedCancel`）；`Resize` 经 `Resizer` 改窗口并写 cast `r` 事件（`TestSession_Resize`）。
-- `Exchange` 先取输入再发送，忙时不发送（`TestSession_ExchangeBusySendsNothing`）；`WithEcho` 丢弃发送前与回显前的陈旧输入，超时重试不被旧回显满足，无回显报 `ErrNoEcho`（`TestEcho_StaleOutput`、`TestEcho_RetryAfterTimeout`、`TestEcho_Missing`）；`Drain` 静默后清空（`TestDrain`）。
+- `Exchange` 先取输入再发送，忙时不发送（`TestSession_ExchangeBusySendsNothing`）；`WithEcho` 丢弃发送前与回显前的陈旧输入，超时重试不被旧回显满足，无回显报 `ErrNoEcho`（`TestEcho_StaleOutput`、`TestEcho_RetryAfterTimeout`、`TestEcho_Missing`）；`WithEchoWait` 等不到回显时退化为延迟并继续匹配，仍丢弃发送前的输入（`TestEchoWait_Degrades`、`TestEchoWait_Synchronizes`）；`Drain` 静默后清空（`TestDrain`）。
 - `Then` 重置计时器（Tcl `exp_continue`），`ThenKeepTimer` 不重置（`TestThen_RestartsTimer`）。
 
 ## 脱敏与录像

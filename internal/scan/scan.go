@@ -25,6 +25,7 @@ const (
 	kindLine
 	kindRegexp
 	kindAll
+	kindStarLiteral
 )
 
 // Matcher is an immutable compiled text pattern.
@@ -103,6 +104,17 @@ func Regexp(re *regexp.Regexp) *Matcher {
 	return m
 }
 
+// StarLiteral matches what the glob "*" followed by literal text matches,
+// re being that glob compiled: from the search start to the end of the
+// last occurrence of lit. It finds the end with bytes.LastIndex instead of
+// running re over the whole buffer; re supplies the names and serves as
+// the reference.
+func StarLiteral(re *regexp.Regexp, lit []byte) *Matcher {
+	m := &Matcher{kind: kindStarLiteral, re: re, lit: slices.Clone(lit)}
+	m.req, m.reqFold = slices.Clone(lit), false
+	return m
+}
+
 // All matches when every part matches somewhere in the buffer, in any
 // order. The match spans from the earliest part start to the latest end.
 func All(parts ...*Matcher) (*Matcher, error) {
@@ -115,7 +127,7 @@ func All(parts ...*Matcher) (*Matcher, error) {
 // Names returns the submatch names, indexed like Match.Groups pairs; nil
 // when the matcher has no named groups.
 func (m *Matcher) Names() []string {
-	if m.kind == kindRegexp {
+	if m.kind == kindRegexp || m.kind == kindStarLiteral {
 		return m.re.SubexpNames()
 	}
 	return nil
@@ -144,6 +156,8 @@ func (m *Matcher) Find(buf []byte, st *State, lim Limits) (Match, bool) {
 		return m.findRegexp(buf, st, lim)
 	case kindAll:
 		return m.findAll(buf, st, lim)
+	case kindStarLiteral:
+		return m.findStarLiteral(buf, st, lim)
 	}
 	return Match{}, false
 }
@@ -162,6 +176,8 @@ func (m *Matcher) Hold(buf []byte) int {
 			return 0
 		}
 		return bytes.LastIndexByte(buf, '\n') + 1
+	case kindStarLiteral:
+		return 0 // the match starts at the buffer start
 	case kindAll:
 		hold := len(buf)
 		for _, p := range m.parts {
@@ -178,6 +194,19 @@ func (s *State) Reset() {
 	for i := range s.parts {
 		s.parts[i].Reset()
 	}
+}
+
+func (m *Matcher) findStarLiteral(buf []byte, st *State, lim Limits) (Match, bool) {
+	if !m.required(buf, st, lim.Window) {
+		return Match{}, false
+	}
+	start := windowStart(0, len(buf), lim.Window)
+	i := bytes.LastIndex(buf[start:], m.lit)
+	if i < 0 {
+		return Match{}, false
+	}
+	end := start + i + len(m.lit)
+	return Match{Start: start, End: end, Groups: []int{start, end}}, true
 }
 
 func (m *Matcher) findLiteral(buf []byte, st *State, lim Limits) (Match, bool) {

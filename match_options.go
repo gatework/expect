@@ -37,6 +37,7 @@ type matchOptions struct {
 	output     bool
 	outLimit   int
 	echo       bool
+	echoWait   time.Duration
 }
 
 // WithTimeout sets the relative timer of the wait, which includes handler

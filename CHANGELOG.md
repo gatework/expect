@@ -4,6 +4,24 @@ All notable changes are recorded here, following Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-24
+
+### Added
+
+- `WithEchoWait(d)` is `WithEcho` that waits at most d for the echo and,
+  when it does not come, matches the cases without it instead of failing
+  at the relative timeout. Input pending before the send is still
+  discarded. A device whose echo is not recognized, such as a long command
+  it redraws, then costs a delay of d rather than a failed command, so echo
+  synchronization can be enabled for platforms not yet verified.
+
+### Performance
+
+- The classic prompt glob, `*` followed by plain text (`*#`,
+  `*router>`), finds its match with `bytes.LastIndex` instead of running
+  the regular expression over the whole buffer: 1.2 MB of output, 19 ms to
+  0.5 ms. It is fuzzed against the regular expression.
+
 ## [0.3.0] - 2026-11-24
 
 ### Added

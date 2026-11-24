@@ -141,3 +141,33 @@ func ExampleSession_StartBackground() {
 	// notice: %LINK-3-UPDOWN: Interface Gi0/1, changed state to down
 	// prompt <nil>
 }
+
+// ExampleSession_Exchange_device runs a command the way real devices need:
+// the device colors its prompt and leaves a stale prompt behind, so the
+// session filters control sequences, settles the prompt and synchronizes
+// on the command's echo.
+func ExampleSession_Exchange_device() {
+	local, remote := net.Pipe()
+	go func() {
+		defer remote.Close()
+		_, _ = io.WriteString(remote, "\x1b[1mr1#\x1b[0m") // left from an earlier command
+		buf := make([]byte, 64)
+		_, _ = remote.Read(buf) // show clock
+		_, _ = io.WriteString(remote, "show clock\r\n\x1b[32m10:00:00 CST\x1b[0m\r\n\x1b[1mr1#\x1b[0m")
+		_, _ = remote.Read(buf) // wait for the session to close
+	}()
+	s, err := expect.NewSession(local, expect.WithLineEnding("\r"), expect.WithoutRecording(), expect.WithTerminalFilter())
+	if err != nil {
+		panic(err)
+	}
+	defer s.Close()
+	prompt := expect.Case{Name: "prompt", Pattern: expect.Line("r1#"), Omit: true, Settle: 50 * time.Millisecond}
+	r, err := s.Exchange(context.Background(), "show clock", []expect.Case{prompt},
+		expect.WithEchoWait(time.Second), expect.WithTimeout(10*time.Second))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("%q %s\n", r.Output, r.Match)
+	// Output:
+	// "\r\n10:00:00 CST\r\n" r1#
+}

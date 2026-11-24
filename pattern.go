@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"regexp/syntax"
 	"slices"
+	"strings"
 
 	"github.com/gatework/expect/internal/scan"
 )
@@ -199,6 +200,9 @@ func (p Pattern) build() Pattern {
 		var re *regexp.Regexp
 		if re, err = scan.Glob(p.text, p.fold); err == nil {
 			p.m = scan.Regexp(re)
+			if lit, ok := starLiteral(p.text); ok && !p.fold {
+				p.m = scan.StarLiteral(re, []byte(lit))
+			}
 			if re.MatchString("") {
 				err = ErrEmptyMatch
 			}
@@ -212,6 +216,16 @@ func (p Pattern) build() Pattern {
 	}
 	p.err = err
 	return p
+}
+
+// starLiteral reports whether glob is "*" followed by plain text, the
+// classic prompt glob ("*#", "*router>"), and returns the text.
+func starLiteral(glob string) (string, bool) {
+	rest := strings.TrimLeft(glob, "*")
+	if len(rest) == len(glob) || rest == "" || strings.ContainsAny(rest, `*?[\`) {
+		return "", false
+	}
+	return rest, true
 }
 
 func (p Pattern) buildAll() (*scan.Matcher, error) {

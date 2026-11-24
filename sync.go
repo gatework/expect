@@ -65,6 +65,26 @@ func WithEcho() MatchOption {
 	}
 }
 
+// WithEchoWait is WithEcho that waits at most d for the echo and, when it
+// does not come, matches the cases without it instead of failing: input
+// pending before the send is still discarded, and what arrived since is
+// kept. Use it where a device's echo is not known to match, such as a long
+// command a device redraws: synchronization then degrades to a delay of d
+// instead of a failure at the relative timeout. A missed echo is reported
+// as an OpEcho event with ClassTimeout and an Info log line.
+func WithEchoWait(d time.Duration) MatchOption {
+	return func(o *matchOptions) error {
+		if d <= 0 {
+			return configError("echo wait", "must be positive")
+		}
+		o.echo, o.echoWait = true, d
+		return nil
+	}
+}
+
+// errEchoMissed reports a WithEchoWait echo that did not come in time.
+var errEchoMissed = fmt.Errorf("%w: %w", ErrNoEcho, ErrTimeout)
+
 // echoPattern matches line as a device echoes it.
 func echoPattern(line string) (Pattern, error) {
 	var b strings.Builder
@@ -90,12 +110,21 @@ func (s *Session) awaitEcho(ctx context.Context, l *lease, line string, o matchO
 	}
 	eo := o
 	eo.output, eo.outLimit, eo.rules, eo.stream = false, 0, nil, nil
+	if o.echoWait > 0 {
+		eo.timeout, eo.idle = o.echoWait, 0
+		if o.timeout > 0 {
+			eo.timeout = min(o.echoWait, o.timeout)
+		}
+	}
 	w := newWaiter(eo, l.wake, newMember(l, []Case{{Name: "echo", Pattern: p}}, eo))
 	_, r, err := w.run(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("%w: %w", ErrNoEcho, err)
+	switch {
+	case err == nil:
+		return len(r.Before), nil
+	case o.echoWait > 0 && errors.Is(err, ErrTimeout):
+		return 0, errEchoMissed // the input stays for the cases
 	}
-	return len(r.Before), nil
+	return 0, fmt.Errorf("%w: %w", ErrNoEcho, err)
 }
 
 // discard drops the input pending on a held lease and returns its size.
