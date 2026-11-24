@@ -37,6 +37,9 @@ var (
 	ErrNoSessions = errors.New("expect: no sessions")
 	// ErrBreakUnsupported reports a transport that cannot send a break.
 	ErrBreakUnsupported error = unsupportedError("expect: transport break unsupported")
+	// ErrResizeUnsupported reports a transport that cannot change its
+	// window size.
+	ErrResizeUnsupported error = unsupportedError("expect: transport resize unsupported")
 )
 
 type unsupportedError string

@@ -37,6 +37,21 @@ type Transcript struct {
 	now      func() time.Time
 }
 
+// Resize records a window size change, a cast "r" event; the other
+// formats do not record it.
+func (t *Transcript) Resize(cols, rows int) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed || t.cast == nil {
+		return nil
+	}
+	if err := t.cast.event(t.now(), "r", []byte(fmt.Sprintf("%dx%d", cols, rows))); err != nil {
+		t.cast = nil
+		return t.fail(fmt.Errorf("record: cast: %w", err))
+	}
+	return nil
+}
+
 // Received records bytes read from the peer.
 func (t *Transcript) Received(p []byte) error { return t.write(DirectionReceived, p) }
 

@@ -94,3 +94,21 @@ func TestConsole(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestSession_Resize changes the window through the Session and lets the
+// child report its new size.
+func TestSession_Resize(t *testing.T) {
+	t.Parallel()
+	p := start(t.Context(), t, `read _; stty size; read _`)
+	s := p.Session()
+	if err := s.Resize(40, 132); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SendLine(t.Context(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Expect(t.Context(), []expect.Case{{Pattern: expect.Literal("40 132")}}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = s.SendLine(t.Context(), "")
+}

@@ -45,6 +45,10 @@ All notable changes are recorded here, following Keep a Changelog.
   said again, input frames checked, and recorded secrets (`expect.Mask`)
   match any text (`expecttest.HearMasked`); `WithReplaySpeed` plays the
   recorded pauses.
+- `Session.Resize` and the optional `Resizer` transport capability (spawn
+  terminals implement it) change the peer's window and record a cast `r`
+  event; `InteractTerminal` forwards the operator's window size on entry
+  and on every SIGWINCH.
 - `WithCharset` for GB18030, GBK and Big5 devices: input is decoded to
   UTF-8 across chunk boundaries before recording, redaction and matching,
   so Chinese prompts match and transcripts are readable; sends are

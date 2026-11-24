@@ -6,6 +6,8 @@ import (
 	"context"
 	"io"
 	"os"
+	"os/signal"
+	"sync"
 
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
@@ -37,7 +39,42 @@ func (s *Session) InteractTerminal(ctx context.Context, input *os.File, output i
 		o.input = cookedCases(o.input, fd, state)
 		o.output = cookedCases(o.output, fd, state)
 	}
+	stop := s.followWindow(fd)
+	defer stop()
 	return s.interact(ctx, dup, output, o)
+}
+
+// followWindow passes the operator terminal's size to the peer now and on
+// every SIGWINCH until stop, when the transport can resize.
+func (s *Session) followWindow(fd int) (stop func()) {
+	if _, ok := s.t.(Resizer); !ok {
+		return func() {}
+	}
+	resize := func() {
+		if cols, rows, err := term.GetSize(fd); err == nil {
+			_ = s.Resize(rows, cols)
+		}
+	}
+	resize()
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, unix.SIGWINCH)
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for {
+			select {
+			case <-sig:
+				resize()
+			case <-done:
+				return
+			}
+		}
+	})
+	return func() {
+		signal.Stop(sig)
+		close(done)
+		wg.Wait()
+	}
 }
 
 // duplicate returns a pollable duplicate of fd so that closing it

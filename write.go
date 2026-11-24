@@ -22,6 +22,35 @@ type Breaker interface {
 	Break(ctx context.Context, d time.Duration) error
 }
 
+// Resizer is the optional transport capability behind Session.Resize: a
+// local terminal (spawn), or an SSH channel sending window-change.
+type Resizer interface {
+	SetSize(rows, cols int) error
+}
+
+// Resize tells the peer the window is now cols wide and rows high, so a
+// device wraps lines and redraws long commands for the operator's
+// terminal, and records the change in the transcript. It fails with
+// ErrResizeUnsupported when the transport is not a Resizer.
+func (s *Session) Resize(rows, cols int) error {
+	if rows <= 0 || cols <= 0 {
+		return configError("window size", "must be positive")
+	}
+	r, ok := s.t.(Resizer)
+	if !ok {
+		return ErrResizeUnsupported
+	}
+	if s.closed.Load() {
+		return ErrClosed
+	}
+	if err := r.SetSize(rows, cols); err != nil {
+		return err
+	}
+	s.diagMu.Lock()
+	defer s.diagMu.Unlock()
+	return s.tr.Resize(cols, rows)
+}
+
 type writeDeadliner interface {
 	SetWriteDeadline(t time.Time) error
 }
