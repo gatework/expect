@@ -4,6 +4,8 @@ All notable changes are recorded here, following Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-24
+
 ### Added
 
 - `WithEchoWait(d)` is `WithEcho` that waits at most d for the echo and,
