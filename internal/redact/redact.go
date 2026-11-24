@@ -73,6 +73,15 @@ func (f *Filter) Sync(src *Filter) {
 	f.secrets, f.rules, f.mask = slices.Clone(src.secrets), slices.Clone(src.rules), src.mask
 }
 
+// MaxSecret returns the length of the longest secret, or zero.
+func (f *Filter) MaxSecret() int {
+	n := 0
+	for _, s := range f.secrets {
+		n = max(n, len(s))
+	}
+	return n
+}
+
 // Active reports whether the filter can change any byte.
 func (f *Filter) Active() bool { return len(f.secrets) > 0 || len(f.rules) > 0 }
 

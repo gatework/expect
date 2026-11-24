@@ -20,11 +20,28 @@ const (
 	OpSend     Operation = "send"
 	OpBreak    Operation = "break"
 	OpInteract Operation = "interact"
-	OpClose    Operation = "close"
+	OpDrain    Operation = "drain"
+	OpPoll     Operation = "poll"
+	// OpBackground ends a StartBackground wait.
+	OpBackground Operation = "background"
+	OpRelay      Operation = "relay"
+	// OpEcho is the echo stage of an Exchange WithEcho; Bytes counts the
+	// stale input it discarded.
+	OpEcho  Operation = "echo"
+	OpClose Operation = "close"
 )
 
 // String returns the operation name.
 func (o Operation) String() string { return string(o) }
+
+// wait reports whether o completes a wait of some receiver.
+func (o Operation) wait() bool {
+	switch o { //nolint:exhaustive // only operations that end a wait
+	case OpExpect, OpPoll, OpDrain, OpEcho, OpBackground, OpRelay, OpInteract:
+		return true
+	}
+	return false
+}
 
 // ErrorClass classifies an error without its message.
 type ErrorClass string
@@ -71,6 +88,7 @@ type Observer func(Event)
 // observers.
 func (s *Session) emit(ctx context.Context, ev Event) {
 	ev.Session = s.id
+	s.count(ev)
 	if s.log.Enabled(ctx, slog.LevelDebug) {
 		s.logEvent(context.WithoutCancel(ctx), ev)
 	}

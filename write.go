@@ -22,6 +22,35 @@ type Breaker interface {
 	Break(ctx context.Context, d time.Duration) error
 }
 
+// Resizer is the optional transport capability behind Session.Resize: a
+// local terminal (spawn), or an SSH channel sending window-change.
+type Resizer interface {
+	SetSize(rows, cols int) error
+}
+
+// Resize tells the peer the window is now cols wide and rows high, so a
+// device wraps lines and redraws long commands for the operator's
+// terminal, and records the change in the transcript. It fails with
+// ErrResizeUnsupported when the transport is not a Resizer.
+func (s *Session) Resize(rows, cols int) error {
+	if rows <= 0 || cols <= 0 {
+		return configError("window size", "must be positive")
+	}
+	r, ok := s.t.(Resizer)
+	if !ok {
+		return ErrResizeUnsupported
+	}
+	if s.closed.Load() {
+		return ErrClosed
+	}
+	if err := r.SetSize(rows, cols); err != nil {
+		return err
+	}
+	s.diagMu.Lock()
+	defer s.diagMu.Unlock()
+	return s.tr.Resize(cols, rows)
+}
+
 type writeDeadliner interface {
 	SetWriteDeadline(t time.Time) error
 }
@@ -100,17 +129,24 @@ func (s *Session) send(ctx context.Context, p []byte, pacer Pacer) (int, error) 
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
+	wire, err := s.encodeText(p)
+	if err != nil {
+		return 0, err
+	}
+	// The transcript keeps the UTF-8 text, so it reads and redacts alike
+	// whatever the device charset.
 	if err := s.recordSent(p); err != nil {
 		return 0, err
 	}
+	p = wire
 	start := time.Now()
 	var n int
-	var err error
 	if pacer == nil {
 		n, err = s.writeAll(ctx, p)
 	} else {
 		n, err = s.writePaced(ctx, p, pacer)
 	}
+	s.noteSent(n)
 	s.emit(ctx, Event{Op: OpSend, Bytes: n, Duration: time.Since(start), Err: classify(err)})
 	if err != nil {
 		return n, err
@@ -198,8 +234,14 @@ func (s *Session) writeAll(ctx context.Context, p []byte) (int, error) {
 // retire closes the session after a failed admitted write. The close
 // error stays available from Close; the caller gets the write error.
 func (s *Session) retire(written int, cause error) error {
-	_ = s.Close()
-	return &WriteError{Written: written, Cause: cause}
+	we := &WriteError{Written: written, Cause: cause}
+	s.end(we)
+	// A write interrupted by Close must not call Close again: Close may be
+	// waiting for this goroutine (the keepalive).
+	if !s.closed.Load() {
+		_ = s.Close()
+	}
+	return we
 }
 
 func isClosed(err error) bool {

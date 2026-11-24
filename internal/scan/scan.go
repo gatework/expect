@@ -277,15 +277,53 @@ func (m *Matcher) required(buf []byte, st *State, window int) bool {
 }
 
 // indexFoldASCII returns the first offset where s equals the lower-case
-// ASCII lit ignoring ASCII case, or -1.
+// ASCII lit ignoring ASCII case, or -1. When lit holds a byte with no
+// case (a digit, space or punctuation), candidates are found with the
+// vectorized bytes.IndexByte on it.
 func indexFoldASCII(s, lit []byte) int {
-	first := lit[0]
-	for i := 0; i+len(lit) <= len(s); i++ {
-		if lowerASCII(s[i]) == first && equalFoldASCII(s[i+1:i+len(lit)], lit[1:]) {
-			return i
+	k := anchor(lit)
+	if k < 0 {
+		first := lit[0]
+		for i := 0; i+len(lit) <= len(s); i++ {
+			if lowerASCII(s[i]) == first && equalFoldASCII(s[i:i+len(lit)], lit) {
+				return i
+			}
 		}
+		return -1
+	}
+	for from := k; from < len(s); {
+		j := bytes.IndexByte(s[from:], lit[k])
+		if j < 0 {
+			return -1
+		}
+		at := from + j - k // candidate start
+		if at+len(lit) > len(s) {
+			return -1
+		}
+		if equalFoldASCII(s[at:at+len(lit)], lit) {
+			return at
+		}
+		from += j + 1
 	}
 	return -1
+}
+
+// anchor returns the index of a byte of lit that has no case, preferring
+// one rarer than a space, or -1.
+func anchor(lit []byte) int {
+	best := -1
+	for i, c := range lit {
+		if lowerASCII(c) != c || 'a' <= c && c <= 'z' {
+			continue
+		}
+		if c != ' ' {
+			return i
+		}
+		if best < 0 {
+			best = i
+		}
+	}
+	return best
 }
 
 func equalFoldASCII(a, lower []byte) bool {

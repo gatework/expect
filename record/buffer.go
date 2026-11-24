@@ -28,10 +28,13 @@ type bufferedFile struct {
 	armed  bool
 	closed bool
 	err    error // a delayed flush failure, reported by the next Write
+	// through flushes every write, for Required transcripts whose write
+	// errors must fail the session at once.
+	through bool
 }
 
-func newBufferedFile(f *os.File) *bufferedFile {
-	return &bufferedFile{f: f, w: bufio.NewWriterSize(f, bufferSize)}
+func newBufferedFile(f *os.File, through bool) *bufferedFile {
+	return &bufferedFile{f: f, w: bufio.NewWriterSize(f, bufferSize), through: through}
 }
 
 func (b *bufferedFile) Write(p []byte) (int, error) {
@@ -44,6 +47,9 @@ func (b *bufferedFile) Write(p []byte) (int, error) {
 		return 0, b.err
 	}
 	n, err := b.w.Write(p)
+	if b.through {
+		return n, errors.Join(err, b.w.Flush())
+	}
 	if !b.armed && b.w.Buffered() > 0 {
 		b.armed = true
 		if b.timer == nil {

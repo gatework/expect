@@ -3,7 +3,10 @@ package expect
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"runtime/debug"
 	"sync"
+	"time"
 )
 
 // Background is a wait running on its own goroutine, for example to
@@ -130,13 +133,21 @@ func (b *Background) Wait(ctx context.Context) (Result, error) {
 
 func (b *Background) run(ctx context.Context, w *waiter) {
 	normal := false
+	start := time.Now()
 	defer func() {
 		if v := recover(); v != nil {
 			b.err = &CallbackError{Kind: CallbackPanicked}
+			// The panic value may hold device output; the stack does not.
+			b.s.log.LogAttrs(context.WithoutCancel(ctx), slog.LevelError, "expect: background handler panicked",
+				slog.String("stack", string(debug.Stack())))
 		} else if !normal {
 			b.err = &CallbackError{Kind: CallbackExited}
 		}
+		if b.err != nil && !errors.Is(b.err, context.Canceled) {
+			w.members[0].waitFailed(ctx, OpBackground, w.o, b.err)
+		}
 		w.members[0].l.release()
+		b.s.emit(ctx, Event{Op: OpBackground, Case: b.r.Name, Scope: b.r.Scope, CaseIndex: b.r.CaseIndex, Duration: time.Since(start), Err: classify(b.err)})
 		b.cancel()
 		close(b.done)
 	}()

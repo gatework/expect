@@ -5,6 +5,7 @@ declared:
   - .
   - ./internal/scan
   - ./internal/redact
+  - ./internal/vt
   - ./record
   - ./spawn
   - ./expecttest
@@ -18,13 +19,13 @@ rules:
     transitive: true
 
   - name: matching and redaction algorithms are independent of sessions and recording
-    packages: [./internal/scan, ./internal/redact]
+    packages: [./internal/scan, ./internal/redact, ./internal/vt]
     deny: [., ./record, ./spawn, ./expecttest]
     transitive: true
 
   - name: recording knows files, not sessions
     packages: [./record]
-    deny: [., ./internal/scan, ./internal/redact, ./spawn, ./expecttest]
+    deny: [., ./internal/scan, ./internal/redact, ./internal/vt, ./spawn, ./expecttest]
     transitive: true
 
   - name: the session depends on its algorithms and recording only
@@ -34,4 +35,4 @@ rules:
 
   - name: process terminals are adapters on top of the session
     packages: [./spawn, ./expecttest]
-    deny: [./internal/scan, ./internal/redact, ./examples/dialogue]
+    deny: [./internal/scan, ./internal/redact, ./internal/vt, ./examples/dialogue]

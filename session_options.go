@@ -5,6 +5,8 @@ import (
 	"slices"
 	"time"
 
+	"golang.org/x/text/encoding"
+
 	"github.com/gatework/expect/record"
 )
 
@@ -33,6 +35,10 @@ type sessionOptions struct {
 	after        []Case
 	removeNulls  bool
 	stripParity  bool
+	terminal     bool
+	keepalive    time.Duration
+	trace        int
+	charset      encoding.Encoding
 }
 
 func defaultSessionOptions() sessionOptions {
@@ -178,6 +184,53 @@ func WithRemoveNulls(enabled bool) SessionOption {
 func WithStripParity(enabled bool) SessionOption {
 	return func(o *sessionOptions) error {
 		o.stripParity = enabled
+		return nil
+	}
+}
+
+// WithTerminalFilter makes waits see the text a line-oriented reader
+// would: terminal control sequences (colors, cursor and erase commands,
+// window titles) are removed, and backspace and cursor-left erase the
+// characters before them on the current line, as devices do to wipe a
+// pager prompt or redraw a long command. Patterns, Results and Output then
+// hold plain text. Transcripts keep the raw bytes for faithful replay;
+// Interact and Relay forward raw bytes too.
+func WithTerminalFilter() SessionOption {
+	return func(o *sessionOptions) error {
+		o.terminal = true
+		return nil
+	}
+}
+
+// WithCharset declares the peer's character set, for devices that speak
+// GB18030, GBK or Big5 rather than UTF-8. Input is decoded to UTF-8 before
+// it is recorded, redacted and matched, so patterns, secrets, Results and
+// transcripts are UTF-8; Send encodes text to enc and fails with
+// ErrUnencodable, sending nothing, when enc cannot represent it. Typical
+// values are simplifiedchinese.GB18030 and traditionalchinese.Big5 from
+// golang.org/x/text/encoding.
+func WithCharset(enc encoding.Encoding) SessionOption {
+	return func(o *sessionOptions) error {
+		if enc == nil {
+			return configError("charset", "nil")
+		}
+		o.charset = enc
+		return nil
+	}
+}
+
+// WithKeepalive sends the line ending whenever the session has neither
+// received nor sent for interval and no receiver holds its input, so a
+// device's exec-timeout does not drop a pooled session. The keepalive
+// takes the input while it runs and discards only the peer's answer to it
+// (until 200 ms of quiet, at most 5 s), keeping input a caller has yet to
+// read. Zero disables it, the default.
+func WithKeepalive(interval time.Duration) SessionOption {
+	return func(o *sessionOptions) error {
+		if interval < 0 {
+			return configError("keepalive", "negative")
+		}
+		o.keepalive = interval
 		return nil
 	}
 }

@@ -23,6 +23,12 @@ var (
 	// ErrOutputLimit reports collected output beyond WithOutputLimit. The
 	// collected part is in Result.Output.
 	ErrOutputLimit = errors.New("expect: output limit reached")
+	// ErrUnencodable reports text the session charset (WithCharset)
+	// cannot represent; nothing was sent.
+	ErrUnencodable = errors.New("expect: text not representable in the session charset")
+	// ErrNoEcho reports a device that did not echo an Exchange line sent
+	// WithEcho; it wraps the cause, usually ErrTimeout.
+	ErrNoEcho = errors.New("expect: no echo of the line sent")
 	// ErrEmptyMatch reports a selected match of zero bytes.
 	ErrEmptyMatch = errors.New("expect: empty match")
 	// ErrInvalidPattern reports a malformed or unusable pattern.
@@ -31,6 +37,9 @@ var (
 	ErrNoSessions = errors.New("expect: no sessions")
 	// ErrBreakUnsupported reports a transport that cannot send a break.
 	ErrBreakUnsupported error = unsupportedError("expect: transport break unsupported")
+	// ErrResizeUnsupported reports a transport that cannot change its
+	// window size.
+	ErrResizeUnsupported error = unsupportedError("expect: transport resize unsupported")
 )
 
 type unsupportedError string

@@ -56,7 +56,7 @@ func TestBufferedFile_FlushesLater(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		b := newBufferedFile(f)
+		b := newBufferedFile(f, false)
 		if _, err := b.Write([]byte("one\n")); err != nil {
 			t.Fatal(err)
 		}
@@ -81,4 +81,22 @@ func TestBufferedFile_FlushesLater(t *testing.T) {
 			t.Fatal("write after close succeeded")
 		}
 	})
+}
+
+// TestBufferedFile_Through checks that a Required transcript writes at once.
+func TestBufferedFile_Through(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "a.log")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := newBufferedFile(f, true)
+	defer b.Close()
+	if _, err := b.Write([]byte("now\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "now\n" {
+		t.Fatalf("not written through: %q", got)
+	}
 }

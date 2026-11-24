@@ -37,6 +37,21 @@ type Transcript struct {
 	now      func() time.Time
 }
 
+// Resize records a window size change, a cast "r" event; the other
+// formats do not record it.
+func (t *Transcript) Resize(cols, rows int) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed || t.cast == nil {
+		return nil
+	}
+	if err := t.cast.event(t.now(), "r", []byte(fmt.Sprintf("%dx%d", cols, rows))); err != nil {
+		t.cast = nil
+		return t.fail(fmt.Errorf("record: cast: %w", err))
+	}
+	return nil
+}
+
 // Received records bytes read from the peer.
 func (t *Transcript) Received(p []byte) error { return t.write(DirectionReceived, p) }
 
@@ -118,7 +133,7 @@ func (t *Transcript) open(f Format, path string, m Meta, start time.Time, maxMB 
 		return fmt.Errorf("record: %s: %w", f, err)
 	}
 	limit := int64(maxMB) << 20
-	bf := newBufferedFile(file)
+	bf := newBufferedFile(file, t.required)
 	switch f {
 	case FormatLog:
 		t.text = &textSink{w: &capped{w: bf, limit: limit, marker: "\n--- recording truncated: size limit ---\n"}}

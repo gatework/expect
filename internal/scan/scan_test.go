@@ -1,6 +1,8 @@
 package scan
 
 import (
+	"bytes"
+	"math/rand/v2"
 	"regexp"
 	"testing"
 )
@@ -245,4 +247,32 @@ func BenchmarkFind_Glob(b *testing.B) {
 
 func BenchmarkFind_DotAll(b *testing.B) {
 	benchFind(b, Regexp(regexp.MustCompile(`(?s)Building.*\[OK\]`)))
+}
+
+// TestIndexFoldASCII compares the anchored search with a naive one.
+func TestIndexFoldASCII(t *testing.T) {
+	t.Parallel()
+	naive := func(s, lit []byte) int {
+		for i := 0; i+len(lit) <= len(s); i++ {
+			if bytes.EqualFold(s[i:i+len(lit)], lit) {
+				return i
+			}
+		}
+		return -1
+	}
+	rng := rand.New(rand.NewPCG(3, 4))
+	alphabet := []byte("aAbB 1[]:yYnN/")
+	for range 20000 {
+		lit := make([]byte, 1+rng.IntN(5))
+		for i := range lit {
+			lit[i] = lowerASCII(alphabet[rng.IntN(len(alphabet))])
+		}
+		s := make([]byte, rng.IntN(40))
+		for i := range s {
+			s[i] = alphabet[rng.IntN(len(alphabet))]
+		}
+		if got, want := indexFoldASCII(s, lit), naive(s, lit); got != want {
+			t.Fatalf("indexFoldASCII(%q, %q) = %d, want %d", s, lit, got, want)
+		}
+	}
 }

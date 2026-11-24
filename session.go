@@ -15,11 +15,18 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/text/encoding"
+
 	"github.com/gatework/expect/internal/redact"
+	"github.com/gatework/expect/internal/vt"
 	"github.com/gatework/expect/record"
 )
 
 const readSize = 32 << 10
+
+// Mask is the text that replaces a redacted secret in transcripts and
+// interactive output.
+const Mask = redact.Mask
 
 // Session is a conversation with one peer over a byte stream it owns.
 //
@@ -36,15 +43,19 @@ type Session struct {
 	in  *inbox
 
 	// Receive state, owned by the current receiver (busy set).
-	busy    atomic.Bool
-	rx      []byte // pending input
-	rxErr   error  // terminal read error, once seen by a receiver
-	version uint64 // changes whenever rx changes
+	busy     atomic.Bool
+	rx       []byte    // pending input
+	rxErr    error     // terminal read error, once seen by a receiver
+	version  uint64    // changes whenever rx changes
+	vt       vt.Filter // WithTerminalFilter state across chunks
+	rewrites uint64    // counts erasures of pending bytes; scans restart
 
 	rules   atomic.Pointer[ruleSet]
 	rulesMu sync.Mutex // serializes SetRules
 
-	wmu sync.Mutex // serializes writes
+	wmu sync.Mutex        // serializes writes and guards enc
+	enc *encoding.Encoder // WithCharset encoder, or nil
+	dec *streamDecoder    // WithCharset decoder, owned by the read pump
 
 	diagMu   sync.Mutex // guards the redaction filters and the transcript writes
 	rxFilter *redact.Filter
@@ -62,6 +73,7 @@ type Session struct {
 	closeOnce sync.Once
 	closeErr  error
 	pump      sync.WaitGroup
+	life      lifecycle
 }
 
 type ruleSet struct {
@@ -86,7 +98,10 @@ func NewSession(t io.ReadWriteCloser, opts ...SessionOption) (*Session, error) {
 	}
 	s := &Session{
 		id: newID(), t: t, o: o, in: newInbox(), done: make(chan struct{}),
-		rxFilter: redact.New(""), txFilter: redact.New(""),
+		rxFilter: redact.New(""), txFilter: redact.New(""), life: newLifecycle(),
+	}
+	if o.charset != nil {
+		s.enc, s.dec = o.charset.NewEncoder(), newStreamDecoder(o.charset)
 	}
 	s.tr, err = rec.Open(record.Meta{Session: s.id, Label: o.label, Width: o.cols, Height: o.rows})
 	if err != nil {
@@ -96,6 +111,10 @@ func NewSession(t io.ReadWriteCloser, opts ...SessionOption) (*Session, error) {
 	s.rules.Store(&ruleSet{before: o.before, after: o.after})
 	s.scope, s.cancel = context.WithCancel(context.Background())
 	s.pump.Go(s.readLoop)
+	if o.keepalive > 0 {
+		s.life.bg.Go(func() { s.keepalive(s.scope, o.keepalive) })
+	}
+	s.logOpened(s.scope)
 	s.emit(s.scope, Event{Op: OpOpen})
 	return s, nil
 }
@@ -118,12 +137,15 @@ func (s *Session) Transcript() []string { return s.tr.Paths() }
 func (s *Session) Close() error {
 	s.closeOnce.Do(func() {
 		start := time.Now()
+		s.end(ErrClosed)
 		s.closed.Store(true)
 		close(s.done)
 		s.cancel()
 		err := s.t.Close()
-		s.pump.Wait()
+		s.joinPump(s.scope)
+		s.life.bg.Wait()
 		s.emit(s.scope, Event{Op: OpClose, Duration: time.Since(start), Err: classify(err)})
+		s.logClosed(s.scope, err)
 		s.closeErr = errors.Join(err, s.finishTranscript())
 	})
 	return s.closeErr
@@ -191,12 +213,17 @@ func (s *Session) readLoop() {
 	buf := make([]byte, readSize)
 	for {
 		n, err := s.t.Read(buf)
-		if n > 0 {
+		if n > 0 || err != nil && s.dec != nil {
 			p := s.normalize(buf[:n])
+			if s.dec != nil {
+				p = s.dec.decode(p, err != nil)
+			}
 			if rerr := s.recordReceived(p); rerr != nil {
+				s.end(rerr)
 				s.in.fail(rerr)
 				return
 			}
+			s.noteReceived(len(p))
 			if len(p) > 0 && !s.in.put(p, s.done) {
 				s.in.fail(ErrClosed)
 				return
@@ -206,6 +233,7 @@ func (s *Session) readLoop() {
 			if s.closed.Load() {
 				err = errors.Join(ErrClosed, err)
 			}
+			s.end(err)
 			s.in.fail(err)
 			return
 		}

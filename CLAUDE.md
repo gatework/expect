@@ -11,7 +11,7 @@ go test -run 'TestSession_Expect' -count=1 . # one test
 go run ./examples/dialogue                   # runnable dialogue (records unless EXPECT_RECORD=off)
 ```
 
-Fuzz targets: `FuzzFindChunks` (internal/scan), `FuzzFilterChunks` (internal/redact), `FuzzSessionChunks` (root). Add new ones to the `fuzz` target in the Makefile.
+Fuzz targets: `FuzzFindChunks` (internal/scan), `FuzzFilterChunks` (internal/redact), `FuzzSessionChunks`, `FuzzCharsetChunks` (root), `FuzzFilterChunks` (internal/vt). Add new ones to the `fuzz` target in the Makefile.
 
 ## Map
 

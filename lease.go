@@ -9,6 +9,9 @@ type lease struct {
 	s    *Session
 	wake chan struct{}
 	held bool
+	// raw makes pull skip WithTerminalFilter: Interact and Relay forward
+	// the peer's bytes as they are.
+	raw bool
 }
 
 // acquire takes the receive slot. Input arrival signals wake; nil makes a
@@ -17,7 +20,10 @@ func (s *Session) acquire(wake chan struct{}) (*lease, error) {
 	if s.closed.Load() {
 		return nil, ErrClosed
 	}
-	if !s.busy.CompareAndSwap(false, true) {
+	if !s.busy.CompareAndSwap(false, true) && !s.afterKeepalive() {
+		if s.closed.Load() {
+			return nil, ErrClosed
+		}
 		return nil, ErrBusy
 	}
 	if wake == nil {
@@ -47,6 +53,7 @@ func (l *lease) reacquire() error {
 	if err != nil {
 		return err
 	}
+	n.raw = l.raw
 	*l = *n
 	return nil
 }
@@ -65,6 +72,13 @@ func (l *lease) pull() bool {
 	}
 	s.rx = slices.Grow(s.rx, n)
 	for _, c := range chunks {
+		if s.o.terminal && !l.raw {
+			var rewrote bool
+			if s.rx, rewrote = s.vt.Append(s.rx, c); rewrote {
+				s.rewrites++
+			}
+			continue
+		}
 		s.rx = append(s.rx, c...)
 	}
 	if err != nil && s.rxErr == nil {

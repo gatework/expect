@@ -4,6 +4,73 @@ All notable changes are recorded here, following Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-24
+
+### Added
+
+- `WithTerminalFilter`: waits match the text a line-oriented reader sees.
+  Control sequences (colors, cursor and erase commands, titles) are
+  removed, and backspace and cursor-left erase the pending characters
+  before them, as pagers and long-command redraws do. Transcripts,
+  Interact and Relay keep the raw bytes.
+- `Case.Settle` turns a case into a prompt: it matches only the final line
+  of pending input and fires once no input has arrived for the Settle
+  duration, so a prompt-like string in output cut at a chunk boundary
+  (`description core#`, Huawei `#` separators) no longer ends a command
+  early. End of input confirms at once; Poll does not wait.
+- `WithEcho` synchronizes an Exchange on the echo of its line: input
+  pending before the send and input arriving before the echo (late output,
+  the prompt or echo of a timed-out command) is discarded instead of being
+  taken as the new command's answer. A missing echo fails with
+  `ErrNoEcho`. The echo stage reports discarded bytes as an `OpEcho` event.
+- `Session.Drain` discards input until the peer is quiet, bounded by the
+  relative timer (`OpDrain` event).
+- Session lifecycle: `Done` and `Err` report a dropped peer, Close or a
+  retiring write without starting a wait; `Stats` (bytes, last activity,
+  waits, failures, `Idle`) serves pools and troubleshooting;
+  `WithKeepalive` keeps idle sessions past exec-timeout, discarding only
+  the answer to the keepalive and making receivers wait rather than fail
+  with `ErrBusy` while it runs.
+- Logs for troubleshooting: Info lines when a session opens and closes
+  (lifetime, cause, bytes, waits, failures, transcript paths), a Warn when
+  the transport does not interrupt Read within 5 s of Close, an Error
+  with the stack (not the value) when a Background handler panics, and
+  `OpPoll`, `OpBackground` and `OpRelay` events.
+- Failed waits log an Info line `expect: wait failed` with the cases waited
+  for, the pending size, how long the peer was silent, the timeout and the
+  transcript paths. `WithMatchTrace(n)` adds Tcl `exp_internal`-style
+  Debug lines per scan and a tail of the last n pending bytes, redacted
+  (a secret cut by the tail start stays masked) and quoted.
+- Transcript replay: `record.ReadCast` parses cast transcripts and
+  `expecttest.Replay` plays one as the peer, so a session recorded on a
+  real device reproduces offline as a regression test. Output frames are
+  said again, input frames checked, and recorded secrets (`expect.Mask`)
+  match any text (`expecttest.HearMasked`); `WithReplaySpeed` plays the
+  recorded pauses.
+- `Session.Resize` and the optional `Resizer` transport capability (spawn
+  terminals implement it) change the peer's window and record a cast `r`
+  event; `InteractTerminal` forwards the operator's window size on entry
+  and on every SIGWINCH.
+- `WithCharset` for GB18030, GBK and Big5 devices: input is decoded to
+  UTF-8 across chunk boundaries before recording, redaction and matching,
+  so Chinese prompts match and transcripts are readable; sends are
+  encoded, and text the charset cannot represent fails with
+  `ErrUnencodable` before anything is written. Relay transcodes between
+  sessions of different charsets.
+
+### Fixed
+
+- `Required` transcripts write through instead of buffering, so a
+  recording failure fails the session at once again.
+
+### Performance
+
+- Case-insensitive prefilters find candidates with `bytes.IndexByte` on a
+  byte that has no case, instead of comparing byte by byte: 30 folded
+  rules over 1.2 MB, -83%. Session benchmarks now read from an in-memory
+  transport, so they measure the engine rather than `net.Pipe`
+  hand-offs.
+
 ## [0.2.0] - 2026-11-21
 
 ### Changed

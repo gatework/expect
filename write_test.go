@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/gatework/expect"
+	"github.com/gatework/expect/record"
 )
 
 // breakConn is a transport that records break requests.
@@ -104,4 +107,61 @@ func TestSession_SendPacedCancel(t *testing.T) {
 			t.Fatalf("session still open after a partial write: %v", err)
 		}
 	})
+}
+
+// sizeConn is a transport that records window changes.
+type sizeConn struct {
+	net.Conn
+	sizes chan [2]int
+}
+
+func (c *sizeConn) SetSize(rows, cols int) error {
+	c.sizes <- [2]int{rows, cols}
+	return nil
+}
+
+func TestSession_Resize(t *testing.T) {
+	t.Parallel()
+	s, _ := pipe(t)
+	if err := s.Resize(24, 80); !errors.Is(err, expect.ErrResizeUnsupported) || !errors.Is(err, errors.ErrUnsupported) {
+		t.Fatalf("plain transport: %v", err)
+	}
+	c := record.DefaultConfig()
+	c.Dir = t.TempDir()
+	rec, err := record.New(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, remote := net.Pipe()
+	t.Cleanup(func() { _ = remote.Close() })
+	sc := &sizeConn{Conn: local, sizes: make(chan [2]int, 1)}
+	rs, err := expect.NewSession(sc, expect.WithRecorder(rec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rs.Resize(0, 80); !errors.As(err, new(*expect.ConfigError)) {
+		t.Fatalf("zero rows: %v", err)
+	}
+	if err := rs.Resize(40, 132); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-sc.sizes; got != [2]int{40, 132} {
+		t.Fatalf("size %v", got)
+	}
+	paths := rs.Transcript()
+	_ = rs.Close()
+	for _, path := range paths {
+		if !strings.HasSuffix(path, ".cast") {
+			continue
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cast, err := record.ReadCast(f)
+		_ = f.Close()
+		if err != nil || len(cast.Frames) != 1 || cast.Frames[0].Kind != record.FrameResize || cast.Frames[0].Data != "132x40" {
+			t.Fatalf("cast %+v, %v", cast, err)
+		}
+	}
 }

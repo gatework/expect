@@ -24,6 +24,7 @@ const (
 	stepHear
 	stepPause
 	stepHangup
+	stepHearMasked
 )
 
 // Step is one move of a scripted peer.
@@ -39,6 +40,11 @@ func Say(text string) Step { return Step{kind: stepSay, text: text} }
 // Hear makes the peer read exactly text next; anything else fails the
 // test. Use it to prove what was, and was not, sent.
 func Hear(text string) Step { return Step{kind: stepHear, text: text} }
+
+// HearMasked is Hear for recorded text in which secrets were redacted:
+// each expect.Mask matches whatever the session sends up to the text that
+// follows it, or up to a line ending when it ends the text.
+func HearMasked(text string) Step { return Step{kind: stepHearMasked, text: text} }
 
 // Pause makes the peer wait d before its next step.
 func Pause(d time.Duration) Step { return Step{kind: stepPause, d: d} }
@@ -134,6 +140,8 @@ func (p *Peer) step(st Step) error {
 			return fmt.Errorf("heard %q, want %q", got[:n], st.text)
 		}
 		return err
+	case stepHearMasked:
+		return p.hearMasked(st.text)
 	case stepPause:
 		time.Sleep(st.d)
 		return nil
@@ -141,6 +149,37 @@ func (p *Peer) step(st Step) error {
 		return p.conn.Close()
 	}
 	return errors.New("unknown step")
+}
+
+// hearMasked reads the literal parts of text exactly and lets each mask
+// absorb the bytes up to the next literal part.
+func (p *Peer) hearMasked(text string) error {
+	parts := strings.Split(text, expect.Mask)
+	var heard []byte
+	one := make([]byte, 1)
+	for i, part := range parts {
+		if i > 0 {
+			// A mask: read until part follows, or a line ending at the end.
+			end := []byte(part)
+			if part == "" {
+				end = []byte("\n")
+			}
+			for !bytes.HasSuffix(heard, end) {
+				if _, err := io.ReadFull(p.conn, one); err != nil {
+					return fmt.Errorf("heard %q, want %q: %w", heard, text, err)
+				}
+				heard = append(heard, one[0])
+			}
+			continue
+		}
+		got := make([]byte, len(part))
+		n, err := io.ReadFull(p.conn, got)
+		heard = append(heard, got[:n]...)
+		if err != nil || string(got) != part {
+			return fmt.Errorf("heard %q, want %q", heard, text)
+		}
+	}
+	return nil
 }
 
 // drain records anything the session sends after the script ended.
